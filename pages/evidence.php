@@ -3,9 +3,10 @@
  * DigiCustody – Evidence List Page
  * Save to: /var/www/html/digicustody/pages/evidence.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
 $page_title = 'Evidence';
@@ -43,6 +44,13 @@ $type_icons = [
 $where  = ['1=1'];
 $params = [];
 
+// All non-admin roles are scoped to case_access
+if (!is_admin()) {
+    $where[] = "(e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
+                OR e.uploaded_by=? OR e.current_custodian=?)";
+    $params = array_merge($params, [$uid, $uid, $uid]);
+}
+
 if ($search !== '') {
     $where[]  = "(e.evidence_number LIKE ? OR e.title LIKE ? OR e.description LIKE ? OR c.case_number LIKE ? OR c.case_title LIKE ?)";
     $s = "%$search%";
@@ -73,7 +81,6 @@ $data_stmt = $pdo->prepare("
            u_cur.full_name AS custodian_name,
            c.case_number,
            c.case_title,
-           (SELECT COUNT(*) FROM evidence_transfers et WHERE et.evidence_id = e.id) AS transfer_count,
            (SELECT hv.integrity_status
             FROM hash_verifications hv
             WHERE hv.evidence_id = e.id
@@ -81,7 +88,10 @@ $data_stmt = $pdo->prepare("
            (SELECT hv.verified_at
             FROM hash_verifications hv
             WHERE hv.evidence_id = e.id
-            ORDER BY hv.verified_at DESC LIMIT 1) AS last_verified_at
+            ORDER BY hv.verified_at DESC LIMIT 1) AS last_verified_at,
+           (SELECT COUNT(*)
+            FROM evidence_transfers et
+            WHERE et.evidence_id = e.id) AS transfer_count
     FROM evidence e
     JOIN users u_up  ON u_up.id  = e.uploaded_by
     JOIN users u_cur ON u_cur.id = e.current_custodian
@@ -93,14 +103,24 @@ $data_stmt = $pdo->prepare("
 $data_stmt->execute(array_merge($params, [$per_page, $offset]));
 $evidence_list = $data_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// ── Cases dropdown ────────────────────────────────────────
-$all_cases = $pdo->query("SELECT id, case_number, case_title FROM cases ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+// ── Cases dropdown (scoped) ───────────────────────────────
+$case_filter = is_admin() ? '' : " WHERE c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR c.created_by=$uid OR c.assigned_to=$uid";
+$all_cases = $pdo->query("SELECT id, case_number, case_title FROM cases c$case_filter ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
 
-// ── Quick stats ───────────────────────────────────────────
-$stat_total     = (int)$pdo->query("SELECT COUNT(*) FROM evidence")->fetchColumn();
-$stat_collected = (int)$pdo->query("SELECT COUNT(*) FROM evidence WHERE status='collected'")->fetchColumn();
-$stat_analysis  = (int)$pdo->query("SELECT COUNT(*) FROM evidence WHERE status='in_analysis'")->fetchColumn();
-$stat_tampered  = (int)$pdo->query("SELECT COUNT(*) FROM hash_verifications WHERE integrity_status='tampered'")->fetchColumn();
+// ── Quick stats (scoped for non-admin) ───────────────────────────────────────────
+if (is_admin()) {
+    $stat_total     = (int)$pdo->query("SELECT COUNT(*) FROM evidence")->fetchColumn();
+    $stat_collected = (int)$pdo->query("SELECT COUNT(*) FROM evidence WHERE status='collected'")->fetchColumn();
+    $stat_analysis  = (int)$pdo->query("SELECT COUNT(*) FROM evidence WHERE status='in_analysis'")->fetchColumn();
+} else {
+    $af = "WHERE case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR uploaded_by=$uid OR current_custodian=$uid";
+    $stat_total     = (int)$pdo->query("SELECT COUNT(*) FROM evidence $af")->fetchColumn();
+    $stat_collected = (int)$pdo->query("SELECT COUNT(*) FROM evidence $af AND status='collected'")->fetchColumn();
+    $stat_analysis  = (int)$pdo->query("SELECT COUNT(*) FROM evidence $af AND status='in_analysis'")->fetchColumn();
+}
+$stat_tampered  = is_admin()
+    ? (int)$pdo->query("SELECT COUNT(*) FROM hash_verifications WHERE integrity_status='tampered'")->fetchColumn()
+    : (int)$pdo->query("SELECT COUNT(*) FROM hash_verifications hv JOIN evidence e ON e.id=hv.evidence_id WHERE hv.integrity_status='tampered' AND (e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR e.uploaded_by=$uid OR e.current_custodian=$uid)")->fetchColumn();
 $stmt_my = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE uploaded_by=?");
 $stmt_my->execute([$uid]);
 $stat_my = (int)$stmt_my->fetchColumn();
@@ -134,7 +154,7 @@ function page_url(int $p): string {
 <title>Evidence — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .filter-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;margin-bottom:20px;}
@@ -202,7 +222,8 @@ function page_url(int $p): string {
 <!-- Page Header -->
 <div class="page-header">
     <div>
-        <h1>Evidence</h1>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+    </div>
         <p>
             <?= number_format($total) ?> record<?= $total !== 1 ? 's' : '' ?> found
             <?= $search !== '' ? ' for &ldquo;' . e($search) . '&rdquo;' : '' ?>
@@ -372,10 +393,6 @@ function page_url(int $p): string {
             &nbsp;·&nbsp; <?= (int)$ev['transfer_count'] ?> transfer<?= $ev['transfer_count'] != 1 ? 's' : '' ?>
         </span>
     </div>
-    <div class="ev-card-hashes">
-        <p title="<?= e($ev['sha256_hash']) ?>">SHA-256: <?= e($ev['sha256_hash']) ?></p>
-        <p title="<?= e($ev['md5_hash']) ?>">MD5:&nbsp;&nbsp;&nbsp;&nbsp; <?= e($ev['md5_hash']) ?></p>
-    </div>
     <div class="ev-card-footer">
         <?= status_badge($ev['status']) ?>
         <span style="font-size:11.5px;color:var(--dim)"><?= date('M j, Y', strtotime($ev['uploaded_at'])) ?></span>
@@ -388,18 +405,17 @@ function page_url(int $p): string {
 <!-- ══ TABLE VIEW ══ -->
 <div class="section-card">
     <div class="section-body">
-    <table class="dc-table" style="table-layout:fixed;width:100%">
+    <div class="table-responsive"><table class="dc-table" style="table-layout:fixed;width:100%">
         <thead>
         <tr>
             <th style="width:115px"><a href="<?= sort_url('evidence_number') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">No. <?= sort_icon('evidence_number') ?></a></th>
-            <th style="width:auto"><a href="<?= sort_url('title') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">Title &amp; Case <?= sort_icon('title') ?></a></th>
-            <th style="width:110px">Custodian</th>
-            <th style="width:140px">Hashes</th>
-            <th style="width:70px"><a href="<?= sort_url('file_size') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">Size <?= sort_icon('file_size') ?></a></th>
-            <th style="width:105px">Status</th>
-            <th style="width:95px">Integrity</th>
-            <th style="width:85px"><a href="<?= sort_url('uploaded_at') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">Date <?= sort_icon('uploaded_at') ?></a></th>
-            <th style="width:185px">Actions</th>
+            <th style="width:200px"><a href="<?= sort_url('title') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">Title &amp; Case <?= sort_icon('title') ?></a></th>
+            <th style="width:80px">Custodian</th>
+            <th style="width:60px"><a href="<?= sort_url('file_size') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">Size <?= sort_icon('file_size') ?></a></th>
+            <th style="width:80px">Status</th>
+            <th style="width:80px">Integrity</th>
+            <th style="width:75px"><a href="<?= sort_url('uploaded_at') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">Date <?= sort_icon('uploaded_at') ?></a></th>
+            <th style="width:120px">Actions</th>
         </tr>
         </thead>
         <tbody>
@@ -407,13 +423,13 @@ function page_url(int $p): string {
             $tampered = ($ev['last_integrity'] === 'tampered');
             [$ico, $col] = $type_icons[$ev['evidence_type']] ?? ['fa-file', 'gray'];
         ?>
-        <tr style="<?= $tampered ? 'background:rgba(248,113,113,0.04);border-left:3px solid var(--danger)' : '' ?>">
+        <tr onclick="window.location='evidence_view.php?id=<?= (int)$ev['id'] ?>'" style="cursor:pointer;<?= $tampered ? 'background:rgba(248,113,113,0.04);border-left:3px solid var(--danger)' : '' ?>">
             <!-- Evidence number -->
-            <td>
+            <td data-label="Evidence">
                 <span class="evidence-num"><?= e($ev['evidence_number']) ?></span>
             </td>
             <!-- Title + type + case (merged, no overflow) -->
-            <td>
+            <td data-label="Title & Case">
                 <div style="display:flex;align-items:flex-start;gap:0;flex-direction:column;">
                     <p style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;"
                        title="<?= e($ev['title']) ?>"><?= e($ev['title']) ?></p>
@@ -433,26 +449,17 @@ function page_url(int $p): string {
                 </div>
             </td>
             <!-- Custodian -->
-            <td>
+            <td data-label="Custodian">
                 <span style="font-size:12.5px;font-weight:500;white-space:nowrap;"><?= e($ev['custodian_name']) ?></span>
                 <?php if ((int)$ev['current_custodian'] === $uid): ?>
                 <span class="badge badge-gold" style="display:block;width:fit-content;margin-top:2px;font-size:10px">Me</span>
                 <?php endif; ?>
             </td>
-            <!-- Hashes -->
-            <td>
-                <span style="font-family:'Courier New',monospace;font-size:10.5px;color:var(--gold);display:block;" title="SHA-256: <?= e($ev['sha256_hash']) ?>">
-                    <?= e(substr($ev['sha256_hash'],0,14)) ?>…
-                </span>
-                <span style="font-family:'Courier New',monospace;font-size:10px;color:var(--dim);display:block;margin-top:2px;" title="MD5: <?= e($ev['md5_hash']) ?>">
-                    <?= e(substr($ev['md5_hash'],0,14)) ?>…
-                </span>
-            </td>
             <!-- Size -->
-            <td><span style="font-size:12px;color:var(--muted);white-space:nowrap"><?= format_filesize($ev['file_size']) ?></span></td>
+            <td data-label="Size"><span style="font-size:12px;color:var(--muted);white-space:nowrap"><?= format_filesize($ev['file_size']) ?></span></td>
             <!-- Status -->
-            <td><?= status_badge($ev['status']) ?></td>
-            <td>
+            <td data-label="Status"><?= status_badge($ev['status']) ?></td>
+            <td data-label="Integrity">
                 <?php if ($tampered): ?>
                     <span class="badge badge-red"><i class="fas fa-triangle-exclamation"></i> Tampered</span>
                 <?php elseif ($ev['last_integrity'] === 'intact'): ?>
@@ -461,21 +468,18 @@ function page_url(int $p): string {
                     <span class="badge badge-gray"><i class="fas fa-question"></i> Unchecked</span>
                 <?php endif; ?>
             </td>
-            <td>
+            <td data-label="Date">
                 <span style="font-size:11.5px;color:var(--muted);white-space:nowrap">
                     <?= date('M j, Y', strtotime($ev['uploaded_at'])) ?>
                 </span>
             </td>
-            <td>
+            <td data-label="Actions">
                 <div style="display:flex;flex-direction:column;gap:4px;">
-                    <a href="evidence_view.php?id=<?= (int)$ev['id'] ?>" class="btn btn-outline btn-sm" style="width:100%;justify-content:center;">
-                        <i class="fas fa-eye"></i> View
-                    </a>
                     <?php if (!is_viewer()): ?>
+                    <a href="evidence_download.php?id=<?= (int)$ev['id'] ?>" class="btn btn-download btn-sm" style="width:100%;justify-content:center;" title="Download" onclick="event.stopPropagation()"><i class="fas fa-download"></i> Download</a>
                     <div style="display:flex;gap:4px;">
-                        <a href="evidence_download.php?id=<?= (int)$ev['id'] ?>" class="btn btn-outline btn-sm btn-icon" title="Download"><i class="fas fa-download"></i></a>
-                        <a href="evidence_verify.php?id=<?= (int)$ev['id'] ?>" class="btn btn-outline btn-sm btn-icon" title="Verify Integrity"><i class="fas fa-fingerprint"></i></a>
-                        <a href="coc_report.php?id=<?= (int)$ev['id'] ?>" class="btn btn-gold btn-sm" style="flex:1;justify-content:center;" title="COC Report"><i class="fas fa-file-shield"></i> COC</a>
+                        <a href="evidence_verify.php?id=<?= (int)$ev['id'] ?>" class="btn btn-outline btn-sm" style="flex:1;justify-content:center;" title="Verify Integrity" onclick="event.stopPropagation()"><i class="fas fa-fingerprint"></i> Verify</a>
+                        <a href="coc_report.php?id=<?= (int)$ev['id'] ?>" class="btn btn-coc btn-sm" style="flex:1;justify-content:center;" title="COC Report" onclick="event.stopPropagation()"><i class="fas fa-file-shield"></i> COC</a>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -483,7 +487,7 @@ function page_url(int $p): string {
         </tr>
         <?php endforeach; ?>
         </tbody>
-    </table>
+    </table></div>
     </div>
 </div>
 <?php endif; ?>
@@ -558,5 +562,6 @@ document.getElementById('searchInput').addEventListener('input',function(){
     st=setTimeout(function(){document.getElementById('filterForm').submit();},700);
 });
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

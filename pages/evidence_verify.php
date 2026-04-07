@@ -3,11 +3,12 @@
  * DigiCustody – Evidence Integrity Verification
  * Save to: /var/www/html/digicustody/pages/evidence_verify.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
-if (is_viewer()) { header('Location: ../dashboard.php?error=access_denied'); exit; }
+if (!is_admin() && !is_investigator()) { header('Location: ../dashboard.php?error=access_denied'); exit; }
 
 $page_title = 'Verify Integrity';
 $uid  = $_SESSION['user_id'];
@@ -85,7 +86,7 @@ $csrf = csrf_token();
 <title>Verify Integrity — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .hash-compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
@@ -116,8 +117,9 @@ $csrf = csrf_token();
 <div class="page-header">
     <div><h1>Integrity Verification</h1><p><?= e($ev['evidence_number']) ?> — <?= e($ev['title']) ?></p></div>
     <div style="display:flex;gap:10px;">
-        <a href="evidence_view.php?id=<?= $id ?>" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back</a>
-        <a href="coc_report.php?id=<?= $id ?>" class="btn btn-outline"><i class="fas fa-file-pdf"></i> COC Report</a>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <a href="evidence_view.php?id=<?= $id ?>" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back to Evidence</a>
+        <a href="coc_report.php?id=<?= $id ?>" class="btn btn-coc"><i class="fas fa-file-pdf"></i> COC Report</a>
     </div>
 </div>
 
@@ -248,5 +250,6 @@ document.addEventListener('click',function(e){if(!e.target.closest('#notifWrap')
 function handleSearch(e){if(e.key==='Enter'){window.location='evidence.php?search='+encodeURIComponent(document.getElementById('globalSearch').value);}}
 function startVerify(){const b=document.getElementById('verifyBtn');b.innerHTML='<i class="fas fa-spinner fa-spin"></i> Calculating hashes...';b.disabled=true;}
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

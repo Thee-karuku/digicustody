@@ -1,12 +1,16 @@
 <?php
-session_start();
 require_once 'config/db.php';
 require_once 'config/functions.php';
+
+set_secure_session_config();
+session_start();
+set_security_headers();
 
 if (isset($_SESSION['user_id'])) { header('Location: dashboard.php'); exit; }
 
 $error = $req_error = $req_success = '';
 $show_modal = false;
+$locked_until = 0;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login') {
     if (!verify_csrf($_POST['csrf_token'] ?? '')) {
@@ -14,25 +18,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
     } else {
         $username = trim($_POST['username'] ?? '');
         $password = $_POST['password'] ?? '';
+        $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+
         if (empty($username) || empty($password)) {
             $error = 'Both fields are required.';
         } else {
-            $stmt = $pdo->prepare("SELECT * FROM users WHERE (username=? OR email=?) AND status='active' LIMIT 1");
-            $stmt->execute([$username, $username]);
-            $user = $stmt->fetch();
-            if ($user && password_verify($password, $user['password'])) {
-                $_SESSION['user_id']       = $user['id'];
-                $_SESSION['username']      = $user['username'];
-                $_SESSION['full_name']     = $user['full_name'];
-                $_SESSION['role']          = $user['role'];
-                $_SESSION['email']         = $user['email'];
-                $_SESSION['last_activity'] = time();
-                $pdo->prepare("UPDATE users SET last_login=NOW() WHERE id=?")->execute([$user['id']]);
-                audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'User logged in',$_SERVER['REMOTE_ADDR']??'',$_SERVER['HTTP_USER_AGENT']??'');
-                header('Location: dashboard.php'); exit;
+            if (is_locked_out($pdo, $username, $ip)) {
+                $locked_until = get_lockout_remaining($pdo, $username, $ip);
+                $mins = floor($locked_until / 60);
+                $secs = $locked_until % 60;
+                $time_str = $mins > 0 ? "{$mins}m {$secs}s" : "{$secs}s";
+                $error = "Too many failed attempts. Try again in {$time_str}.";
             } else {
-                $error = 'Incorrect username or password.';
-                audit_log($pdo,null,$username,null,'login_failed',null,null,null,"Failed login: $username",$_SERVER['REMOTE_ADDR']??'');
+                $stmt = $pdo->prepare("SELECT * FROM users WHERE (username=? OR email=?) AND status='active' LIMIT 1");
+                $stmt->execute([$username, $username]);
+                $user = $stmt->fetch();
+                if ($user && password_verify($password, $user['password'])) {
+                    record_login_attempt($pdo, $username, $ip, true);
+                    
+                    // Check if 2FA is enabled
+                    if ($user['two_factor_enabled'] == 1) {
+                        $_SESSION['pending_2fa_user'] = $user['id'];
+                        header('Location: verify_2fa.php'); exit;
+                    }
+                    
+                    secure_session_regenerate();
+                    $_SESSION['user_id']       = $user['id'];
+                    $_SESSION['username']      = $user['username'];
+                    $_SESSION['full_name']     = $user['full_name'];
+                    $_SESSION['role']          = $user['role'];
+                    $_SESSION['email']         = $user['email'];
+                    $_SESSION['last_activity'] = time();
+                    $pdo->prepare("UPDATE users SET last_login=NOW() WHERE id=?")->execute([$user['id']]);
+                    audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'User logged in',$ip,$_SERVER['HTTP_USER_AGENT']??'');
+                    header('Location: dashboard.php'); exit;
+                } else {
+                    record_login_attempt($pdo, $username, $ip, false);
+                    $attempts_left = LOGIN_MAX_ATTEMPTS - get_failed_attempts($pdo, $username, $ip);
+                    if ($attempts_left <= 0) {
+                        $locked_until = get_lockout_remaining($pdo, $username, $ip);
+                        $mins = floor($locked_until / 60);
+                        $secs = $locked_until % 60;
+                        $time_str = $mins > 0 ? "{$mins}m {$secs}s" : "{$secs}s";
+                        $error = "Account locked. Try again in {$time_str}.";
+                    } elseif ($attempts_left <= 2) {
+                        $error = "Incorrect username or password. {$attempts_left} attempt" . ($attempts_left !== 1 ? 's' : '') . " remaining.";
+                    } else {
+                        $error = 'Incorrect username or password.';
+                    }
+                    audit_log($pdo,null,$username,null,'login_failed',null,null,null,"Failed login: $username",$ip,$_SERVER['HTTP_USER_AGENT']??'');
+                }
             }
         }
     }
@@ -78,7 +113,7 @@ $csrf = csrf_token();
 <title>DigiCustody — Sign In</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -209,7 +244,11 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
       </button>
     </form>
 
-    <div class="rrow">
+    <div class="rrow" style="padding-top:12px;border-top:1px solid var(--border);margin-top:15px;">
+      <a href="forgot_password.php" style="font-size:12px;color:var(--muted);text-decoration:none;"><i class="fas fa-key"></i> Forgot password?</a>
+    </div>
+
+    <div class="rrow" style="margin-top:15px;padding-top:15px;">
       <p>Don't have an account?</p>
       <button class="breq" onclick="openM()"><i class="fas fa-user-plus" style="font-size:11px"></i> Request access</button>
     </div>

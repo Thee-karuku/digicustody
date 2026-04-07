@@ -3,10 +3,17 @@
  * DigiCustody – Chain of Custody Report
  * Save to: /var/www/html/digicustody/pages/coc_report.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
+
+// COC Report — admin and investigator only
+if (!is_admin() && !is_investigator()) {
+    header('Location: ' . BASE_URL . 'dashboard.php?error=access_denied');
+    exit;
+}
 
 $id = (int)($_GET['id'] ?? 0);
 if (!$id) { header('Location: evidence.php'); exit; }
@@ -56,6 +63,22 @@ $verifications = $pdo->prepare("
 $verifications->execute([$id]);
 $verifications = $verifications->fetchAll(PDO::FETCH_ASSOC);
 
+// Transfer history
+$transfers = $pdo->prepare("
+    SELECT et.*,
+           u_from.full_name AS from_name, u_from.role AS from_role, u_from.badge_number AS from_badge,
+           u_to.full_name   AS to_name,   u_to.role   AS to_role,   u_to.badge_number   AS to_badge,
+           u_acc.full_name  AS accepted_by_name
+    FROM evidence_transfers et
+    JOIN users u_from ON u_from.id = et.from_user
+    JOIN users u_to   ON u_to.id   = et.to_user
+    LEFT JOIN users u_acc ON u_acc.id = et.accepted_by
+    WHERE et.evidence_id = ?
+    ORDER BY et.transferred_at ASC
+");
+$transfers->execute([$id]);
+$transfers = $transfers->fetchAll(PDO::FETCH_ASSOC);
+
 // Analysis reports
 $reports = $pdo->prepare("
     SELECT ar.*, u.full_name AS analyst_name, u.badge_number AS analyst_badge,
@@ -87,7 +110,7 @@ $print_mode   = isset($_GET['print']);
 <title>Chain of Custody Report — <?= e($ev['evidence_number']) ?></title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <?php if (!$print_mode): ?>
 <link rel="stylesheet" href="../assets/css/global.css">
 <?php endif; ?>
@@ -174,6 +197,7 @@ body { font-family: 'Inter', sans-serif; background: white; color: #111; font-si
 <!-- Screen toolbar -->
 <div class="no-print" style="background:#0a1628;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;position:sticky;top:0;z-index:100;">
     <div style="display:flex;align-items:center;gap:14px;">
+        <button type="button" class="btn-back" onclick="goBack()" style="color:#c9a84c;"><i class="fas fa-arrow-left"></i> Back</button>
         <a href="evidence_view.php?id=<?= $id ?>" style="color:#c9a84c;font-size:13px;text-decoration:none;display:flex;align-items:center;gap:6px;">
             <i class="fas fa-arrow-left"></i> Back to Evidence
         </a>
@@ -448,7 +472,93 @@ body { font-family: 'Inter', sans-serif; background: white; color: #111; font-si
 </div>
 <?php endif; ?>
 
-<!-- ══ 8. SIGNATURE BLOCK ══ -->
+<!-- ══ 8. CUSTODY TRANSFER HISTORY ══ -->
+<div class="section">
+    <div class="section-title"><i class="fas fa-right-left"></i> <?= $ev['collection_notes']?'8':'7' ?>. Custody Transfer History</div>
+    <?php if (empty($transfers)): ?>
+    <p style="font-size:11.5px;color:#888;font-style:italic;">No custody transfers recorded for this evidence.</p>
+    <?php else: ?>
+    <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead>
+            <tr style="background:#f0f0f0;">
+                <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">Date &amp; Time</th>
+                <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">From</th>
+                <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">To</th>
+                <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">Reason</th>
+                <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">Status</th>
+                <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">Hash at Transfer</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($transfers as $t): ?>
+        <tr>
+            <td style="padding:6px 10px;border:1px solid #eee;"><?= date('M j, Y H:i:s',strtotime($t['transferred_at'])) ?></td>
+            <td style="padding:6px 10px;border:1px solid #eee;"><?= e($t['from_name']) ?> (<?= ucfirst($t['from_role']) ?><?= $t['from_badge']?' · '.e($t['from_badge']):'' ?>)</td>
+            <td style="padding:6px 10px;border:1px solid #eee;"><?= e($t['to_name']) ?> (<?= ucfirst($t['to_role']) ?><?= $t['to_badge']?' · '.e($t['to_badge']):'' ?>)</td>
+            <td style="padding:6px 10px;border:1px solid #eee;"><?= e($t['transfer_reason']) ?></td>
+            <td style="padding:6px 10px;border:1px solid #eee;">
+                <?php if ($t['status'] === 'accepted'): ?>
+                <span class="badge-status bs-green">Accepted<?= $t['accepted_by_name']?' by '.e($t['accepted_by_name']):'' ?></span>
+                <?php elseif ($t['status'] === 'rejected'): ?>
+                <span class="badge-status bs-red">Rejected</span>
+                <?php else: ?>
+                <span class="badge-status bs-orange">Pending</span>
+                <?php endif; ?>
+            </td>
+            <td style="padding:6px 10px;border:1px solid #eee;">
+                <?php if ($t['hash_verified'] && $t['hash_at_transfer']): ?>
+                <span style="font-family:'Courier New',monospace;font-size:9.5px;"><?= e(substr($t['hash_at_transfer'], 0, 32)) ?>…</span>
+                <?php else: ?>
+                <span style="color:#888;">—</span>
+                <?php endif; ?>
+            </td>
+        </tr>
+        <?php if ($t['transfer_notes']): ?>
+        <tr><td colspan="6" style="padding:4px 10px 8px;border:1px solid #eee;font-size:10.5px;color:#777;font-style:italic;">Notes: <?= nl2br(e($t['transfer_notes'])) ?></td></tr>
+        <?php endif; ?>
+        <?php if ($t['status'] === 'rejected' && $t['rejection_reason']): ?>
+        <tr><td colspan="6" style="padding:4px 10px 8px;border:1px solid #eee;font-size:10.5px;color:#cc2222;">Rejection reason: <?= nl2br(e($t['rejection_reason'])) ?></td></tr>
+        <?php endif; ?>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <?php endif; ?>
+</div>
+
+<!-- ══ 9. ANALYSIS REPORTS ══ -->
+<?php if (!empty($reports)): ?>
+<div class="section">
+    <div class="section-title"><i class="fas fa-file-lines"></i> Analysis Reports (<?= count($reports) ?>)</div>
+    <?php foreach ($reports as $r): ?>
+    <div class="report-block">
+        <div class="rb-num"><?= e($r['report_number']) ?> &nbsp;·&nbsp; <?= date('M j, Y',strtotime($r['created_at'])) ?> &nbsp;·&nbsp; <?= e($r['analyst_name']) ?><?= $r['analyst_badge']?' ('.e($r['analyst_badge']).')':'' ?></div>
+        <div class="rb-title"><?= e($r['title']) ?></div>
+        <div class="rb-label">Summary</div>
+        <div class="rb-text"><?= nl2br(e($r['summary'])) ?></div>
+        <div class="rb-label">Findings</div>
+        <div class="rb-text"><?= nl2br(e($r['findings'])) ?></div>
+        <?php if ($r['conclusions']): ?>
+        <div class="rb-label">Conclusions</div>
+        <div class="rb-text"><?= nl2br(e($r['conclusions'])) ?></div>
+        <?php endif; ?>
+        <?php if ($r['recommendations']): ?>
+        <div class="rb-label">Recommendations</div>
+        <div class="rb-text"><?= nl2br(e($r['recommendations'])) ?></div>
+        <?php endif; ?>
+        <?php if ($r['tools_used']): ?>
+        <div class="rb-label">Tools Used</div>
+        <div class="rb-text"><?= e($r['tools_used']) ?></div>
+        <?php endif; ?>
+        <div style="margin-top:8px;font-size:10.5px;color:#555;">
+            Status: <strong><?= ucfirst($r['status']) ?></strong>
+            <?php if ($r['reviewer_name']): ?> &nbsp;·&nbsp; Reviewed by: <?= e($r['reviewer_name']) ?> on <?= date('M j, Y',strtotime($r['reviewed_at'])) ?><?php endif; ?>
+        </div>
+    </div>
+    <?php endforeach; ?>
+</div>
+<?php endif; ?>
+
+<!-- ══ 10. SIGNATURE BLOCK ══ -->
 <div class="section">
     <div class="section-title"><i class="fas fa-pen"></i> Certification &amp; Signatures</div>
     <p style="font-size:11px;color:#333;margin-bottom:14px;line-height:1.6;">
@@ -490,6 +600,8 @@ body { font-family: 'Inter', sans-serif; background: white; color: #111; font-si
 
 <?php if ($print_mode): ?>
 <script>window.onload=function(){window.print();}</script>
+<?php else: ?>
+<script src="../assets/js/main.js"></script>
 <?php endif; ?>
 </body>
 </html>

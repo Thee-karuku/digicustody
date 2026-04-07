@@ -3,9 +3,10 @@
  * DigiCustody – User Profile Page
  * Save to: /var/www/html/digicustody/pages/profile.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
 $page_title = 'My Profile';
@@ -74,8 +75,8 @@ $ev_uploaded  = (int)$pdo->prepare("SELECT COUNT(*) FROM evidence WHERE uploaded
 $s = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE uploaded_by=?"); $s->execute([$uid]);
 $ev_uploaded = (int)$s->fetchColumn();
 
-$s = $pdo->prepare("SELECT COUNT(*) FROM evidence_transfers WHERE from_user=? OR to_user=?"); $s->execute([$uid,$uid]);
-$transfers = (int)$s->fetchColumn();
+$s = $pdo->prepare("SELECT COUNT(*) FROM download_history WHERE user_id=?"); $s->execute([$uid]);
+$downloads = (int)$s->fetchColumn();
 
 $s = $pdo->prepare("SELECT COUNT(*) FROM analysis_reports WHERE submitted_by=?"); $s->execute([$uid]);
 $reports = (int)$s->fetchColumn();
@@ -98,7 +99,7 @@ $csrf = csrf_token();
 <title>My Profile — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .profile-hero{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;margin-bottom:24px;display:flex;align-items:center;gap:22px;flex-wrap:wrap;}
@@ -130,11 +131,14 @@ $csrf = csrf_token();
 <div class="page-content">
 
 <div class="page-header">
-    <h1>My Profile</h1>
+    <div style="display:flex;align-items:center;gap:12px;">
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <h1 style="margin:0;">My Profile</h1>
+    </div>
 </div>
 
-<?php if ($msg): ?><div class="alert alert-success"><i class="fas fa-circle-check"></i> <?= $msg ?></div><?php endif; ?>
-<?php if ($err): ?><div class="alert alert-danger"><i class="fas fa-circle-exclamation"></i> <?= e($err) ?></div><?php endif; ?>
+<!-- ══ TOAST CONTAINER ══ -->
+<div class="toast-container" id="toastContainer"></div>
 
 <!-- Profile Hero -->
 <div class="profile-hero">
@@ -171,8 +175,8 @@ $csrf = csrf_token();
         <p class="sm-lbl">Evidence Uploaded</p>
     </div>
     <div class="sm-stat">
-        <p class="sm-val" style="color:var(--info)"><?= $transfers ?></p>
-        <p class="sm-lbl">Transfers</p>
+        <p class="sm-val" style="color:var(--info)"><?= $downloads ?></p>
+        <p class="sm-lbl">Downloads</p>
     </div>
     <div class="sm-stat">
         <p class="sm-val" style="color:var(--success)"><?= $reports ?></p>
@@ -294,6 +298,30 @@ function toggleUserMenu(){document.getElementById('userDropdown').classList.togg
 document.addEventListener('click',function(e){if(!e.target.closest('#notifWrap'))document.getElementById('notifDropdown').classList.remove('open');if(!e.target.closest('#userMenuWrap'))document.getElementById('userDropdown').classList.remove('open');});
 function handleSearch(e){if(e.key==='Enter'){window.location='evidence.php?search='+encodeURIComponent(document.getElementById('globalSearch').value);}}
 function tp(inp,ico){const i=document.getElementById(inp),ic=document.getElementById(ico);i.type=i.type==='password'?'text':'password';ic.classList.toggle('fa-eye');ic.classList.toggle('fa-eye-slash');}
+
+// Toast notifications
+function showToast(type,title,msg,duration){
+    duration=duration||4000;
+    var icons={success:'fa-circle-check',error:'fa-circle-xmark',warning:'fa-triangle-exclamation',info:'fa-circle-info'};
+    var t=document.createElement('div');
+    t.className='toast '+type;
+    t.innerHTML='<div class="toast-icon"><i class="fas '+(icons[type]||icons.info)+'"></i></div><div class="toast-body"><div class="toast-title">'+title+'</div><div class="toast-msg">'+msg+'</div></div><button class="toast-close" onclick="removeToast(this.parentElement)"><i class="fas fa-xmark"></i></button><div class="toast-bar" style="animation-duration:'+(duration/1000)+'s"></div>';
+    document.getElementById('toastContainer').appendChild(t);
+    setTimeout(function(){removeToast(t);},duration);
+}
+function removeToast(t){
+    if(!t||t.classList.contains('removing'))return;
+    t.classList.add('removing');
+    setTimeout(function(){if(t.parentElement)t.parentElement.removeChild(t);},300);
+}
+
+<?php if ($msg): ?>
+showToast('success','Success','<?= addslashes($msg) ?>');
+<?php endif; ?>
+<?php if ($err): ?>
+showToast('error','Error','<?= addslashes($err) ?>');
+<?php endif; ?>
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

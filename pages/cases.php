@@ -3,10 +3,17 @@
  * DigiCustody – Cases Management
  * Save to: /var/www/html/digicustody/pages/cases.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
+
+// Viewers cannot manage cases — redirect to dashboard
+if (is_viewer()) {
+    header('Location: ' . BASE_URL . 'dashboard.php?error=access_denied');
+    exit;
+}
 
 $page_title = 'Cases';
 $uid  = $_SESSION['user_id'];
@@ -33,6 +40,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     VALUES(?,?,?,?,?,'open',?)")
                     ->execute([$case_num,$title,$desc,$type,$priority,$uid]);
                 $cid = $pdo->lastInsertId();
+                // Auto-grant case_access to creator
+                grant_case_access($pdo, $cid, $uid, $uid);
                 audit_log($pdo,$uid,$_SESSION['username'],$role,'case_created','case',$cid,$case_num,"Case created: $case_num — $title");
                 $msg = "Case <strong>$case_num</strong> created successfully.";
             }
@@ -56,6 +65,14 @@ $sort = in_array($_GET['sort']??'',['case_number','case_title','status','priorit
 $dir  = strtoupper($_GET['dir']??'DESC')==='ASC' ? 'ASC' : 'DESC';
 
 $where = ['1=1']; $params = [];
+
+// All non-admin roles are scoped to assigned cases
+if (!is_admin()) {
+    $where[] = "(c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
+                OR c.assigned_analyst=? OR c.created_by=? OR c.assigned_to=?)";
+    $params = array_merge($params, [$uid, $uid, $uid, $uid]);
+}
+
 if ($search !== '') {
     $where[] = "(case_number LIKE ? OR case_title LIKE ? OR description LIKE ?)";
     $s = "%$search%"; $params = array_merge($params,[$s,$s,$s]);
@@ -75,11 +92,19 @@ $cases_stmt = $pdo->prepare("
 $cases_stmt->execute($params);
 $cases = $cases_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Stats
-$total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases")->fetchColumn();
-$open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='open'")->fetchColumn();
-$active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='under_investigation'")->fetchColumn();
-$closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='closed'")->fetchColumn();
+// Stats — scoped to non-admin
+if (is_admin()) {
+    $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases")->fetchColumn();
+    $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='open'")->fetchColumn();
+    $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='under_investigation'")->fetchColumn();
+    $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='closed'")->fetchColumn();
+} else {
+    $cf = "WHERE id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR assigned_analyst=$uid OR created_by=$uid OR assigned_to=$uid";
+    $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases $cf")->fetchColumn();
+    $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='open'")->fetchColumn();
+    $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='under_investigation'")->fetchColumn();
+    $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='closed'")->fetchColumn();
+}
 
 $csrf = csrf_token();
 
@@ -97,7 +122,7 @@ function ci($col){global $sort,$dir;if($sort!==$col)return '<i class="fas fa-sor
 <title>Cases — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .filter-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:20px;}
@@ -152,7 +177,8 @@ function ci($col){global $sort,$dir;if($sort!==$col)return '<i class="fas fa-sor
 
 <div class="page-header">
     <div>
-        <h1>Cases</h1>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <h1 style="margin-top:8px;">Cases</h1>
         <p><?= $total_cases ?> total &nbsp;·&nbsp; <?= $open_cases ?> open &nbsp;·&nbsp; <?= $active_cases ?> under investigation</p>
     </div>
     <?php if (in_array($role,['admin','investigator'])): ?>
@@ -203,7 +229,7 @@ function ci($col){global $sort,$dir;if($sort!==$col)return '<i class="fas fa-sor
     <?php if (empty($cases)): ?>
     <div class="empty-state"><i class="fas fa-folder-open"></i><p>No cases found.</p></div>
     <?php else: ?>
-    <table class="dc-table">
+    <div class="table-responsive"><table class="dc-table">
         <thead><tr>
             <th><a href="<?= cu('case_number') ?>" class="sort-th">Case No. <?= ci('case_number') ?></a></th>
             <th><a href="<?= cu('case_title') ?>" class="sort-th">Title <?= ci('case_title') ?></a></th>
@@ -217,22 +243,22 @@ function ci($col){global $sort,$dir;if($sort!==$col)return '<i class="fas fa-sor
         <tbody>
         <?php foreach ($cases as $c): ?>
         <tr>
-            <td><a href="case_view.php?id=<?= $c['id'] ?>" style="font-weight:700;font-size:12.5px;color:var(--gold);font-family:'Space Grotesk',sans-serif;text-decoration:none;"><?= e($c['case_number']) ?></a></td>
-            <td>
+            <td data-label="Case No."><a href="case_view.php?id=<?= $c['id'] ?>" style="font-weight:700;font-size:12.5px;color:var(--gold);font-family:'Space Grotesk',sans-serif;text-decoration:none;"><?= e($c['case_number']) ?></a></td>
+            <td data-label="Title">
                 <a href="case_view.php?id=<?= $c['id'] ?>" style="text-decoration:none;">
                 <p style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= e($c['case_title']) ?>"><?= e($c['case_title']) ?></p></a>
                 <?php if ($c['case_type']): ?><p style="font-size:11px;color:var(--muted)"><?= e($c['case_type']) ?></p><?php endif; ?>
             </td>
-            <td><?= status_badge($c['status']) ?></td>
-            <td><span class="badge badge-<?= $priority_colors[$c['priority']]??'gray' ?>"><?= ucfirst($c['priority']) ?></span></td>
-            <td>
+            <td data-label="Status"><?= status_badge($c['status']) ?></td>
+            <td data-label="Priority"><span class="badge badge-<?= $priority_colors[$c['priority']]??'gray' ?>"><?= ucfirst($c['priority']) ?></span></td>
+            <td data-label="Evidence">
                 <a href="evidence.php?case=<?= $c['id'] ?>" class="badge badge-<?= $c['evidence_count']>0?'blue':'gray' ?>" style="text-decoration:none">
                     <i class="fas fa-database" style="font-size:9px"></i> <?= $c['evidence_count'] ?>
                 </a>
             </td>
-            <td><span style="font-size:12.5px"><?= e($c['creator_name']) ?></span></td>
-            <td><span style="font-size:12px;color:var(--muted)"><?= date('M j, Y',strtotime($c['created_at'])) ?></span></td>
-            <td>
+            <td data-label="Created By"><span style="font-size:12.5px"><?= e($c['creator_name']) ?></span></td>
+            <td data-label="Date"><span style="font-size:12px;color:var(--muted)"><?= date('M j, Y',strtotime($c['created_at'])) ?></span></td>
+            <td data-label="Actions">
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
                     <a href="case_view.php?id=<?= $c['id'] ?>" class="btn btn-outline btn-sm">
                         <i class="fas fa-eye"></i> View Case
@@ -251,7 +277,7 @@ function ci($col){global $sort,$dir;if($sort!==$col)return '<i class="fas fa-sor
         </tr>
         <?php endforeach; ?>
         </tbody>
-    </table>
+    </table></div>
     <?php endif; ?>
 </div>
 
@@ -344,5 +370,6 @@ function openStatusModal(id,status){
 var st;var si=document.getElementById('searchInput');
 if(si) si.addEventListener('input',function(){clearTimeout(st);st=setTimeout(function(){document.getElementById('filterForm').submit();},500);});
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

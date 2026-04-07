@@ -3,9 +3,10 @@
  * DigiCustody – Case Detail View
  * Save to: /var/www/html/digicustody/pages/case_view.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
 $page_title = 'Case Details';
@@ -107,7 +108,7 @@ $csrf = csrf_token();
 <title><?= e($case['case_number']) ?> — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .case-hero{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:26px;margin-bottom:24px;}
@@ -149,6 +150,7 @@ $csrf = csrf_token();
         <p><?= e($case['case_title']) ?></p>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
         <a href="cases.php" class="btn btn-outline"><i class="fas fa-arrow-left"></i> All Cases</a>
         <?php if (can_write()): ?>
         <a href="evidence_upload.php?case_id=<?= $id ?>" class="btn btn-gold">
@@ -258,7 +260,7 @@ $csrf = csrf_token();
         </div>
         <?php else: ?>
         <div style="overflow-x:auto;">
-        <table class="dc-table" style="table-layout:fixed;width:100%">
+        <div class="table-responsive"><table class="dc-table" style="table-layout:fixed;width:100%">
             <thead><tr>
                 <th style="width:110px">Evidence No.</th>
                 <th style="width:auto">Title</th>
@@ -278,22 +280,22 @@ $csrf = csrf_token();
                 [$ico,$col] = $type_icons[$ev['evidence_type']] ?? ['fa-file','gray'];
             ?>
             <tr class="<?= $tampered?'ev-row-tampered':'' ?>">
-                <td><span style="font-weight:700;font-size:12.5px;color:var(--gold);font-family:'Space Grotesk',sans-serif"><?= e($ev['evidence_number']) ?></span></td>
-                <td>
+                <td data-label="Evidence No."><span style="font-weight:700;font-size:12.5px;color:var(--gold);font-family:'Space Grotesk',sans-serif"><?= e($ev['evidence_number']) ?></span></td>
+                <td data-label="Title">
                     <p style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= e($ev['title']) ?>"><?= e($ev['title']) ?></p>
                     <?php if ($ev['description']): ?>
                     <p style="font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><?= e(substr($ev['description'],0,40)) ?></p>
                     <?php endif; ?>
                 </td>
-                <td><span class="badge badge-blue"><i class="fas <?= $ico ?>" style="font-size:9px"></i> <?= ucfirst(str_replace('_',' ',$ev['evidence_type'])) ?></span></td>
-                <td><span style="font-size:12.5px"><?= e($ev['uploader_name']) ?></span></td>
-                <td>
+                <td data-label="Type"><span class="badge badge-blue"><i class="fas <?= $ico ?>" style="font-size:9px"></i> <?= ucfirst(str_replace('_',' ',$ev['evidence_type'])) ?></span></td>
+                <td data-label="Uploaded By"><span style="font-size:12.5px"><?= e($ev['uploader_name']) ?></span></td>
+                <td data-label="Hashes">
                     <span class="hash-chip" title="SHA-256: <?= e($ev['sha256_hash']) ?>">SHA: <?= e(substr($ev['sha256_hash'],0,14)) ?>...</span>
                     <span class="hash-chip" title="MD5: <?= e($ev['md5_hash']) ?>">MD5: <?= e(substr($ev['md5_hash'],0,14)) ?>...</span>
                 </td>
-                <td><span style="font-size:12px;color:var(--muted)"><?= format_filesize($ev['file_size']) ?></span></td>
-                <td><?= status_badge($ev['status']) ?></td>
-                <td>
+                <td data-label="Size"><span style="font-size:12px;color:var(--muted)"><?= format_filesize($ev['file_size']) ?></span></td>
+                <td data-label="Status"><?= status_badge($ev['status']) ?></td>
+                <td data-label="Integrity">
                     <?php if ($tampered): ?>
                         <span class="badge badge-red"><i class="fas fa-triangle-exclamation"></i> Tampered</span>
                     <?php elseif ($ev['last_integrity']==='intact'): ?>
@@ -302,25 +304,25 @@ $csrf = csrf_token();
                         <span class="badge badge-gray">Unchecked</span>
                     <?php endif; ?>
                 </td>
-                <td>
+                <td data-label="Reports">
                     <span class="badge <?= (int)$ev['report_count']>0?'badge-green':'badge-gray' ?>">
                         <i class="fas fa-file-lines" style="font-size:9px"></i> <?= (int)$ev['report_count'] ?>
                     </span>
                 </td>
-                <td><span style="font-size:11.5px;color:var(--muted)"><?= date('M j, Y',strtotime($ev['uploaded_at'])) ?></span></td>
-                <td>
+                <td data-label="Date"><span style="font-size:11.5px;color:var(--muted)"><?= date('M j, Y',strtotime($ev['uploaded_at'])) ?></span></td>
+                <td data-label="Actions">
                     <div style="display:flex;gap:5px;flex-wrap:wrap;">
                         <a href="evidence_view.php?id=<?= $ev['id'] ?>" class="btn btn-outline btn-sm">
                             <i class="fas fa-eye"></i> View
                         </a>
                         <?php if (can_write()): ?>
-                        <a href="evidence_download.php?id=<?= $ev['id'] ?>" class="btn btn-outline btn-sm">
-                            <i class="fas fa-download"></i>
+                        <a href="evidence_download.php?id=<?= $ev['id'] ?>" class="btn btn-download btn-sm">
+                            <i class="fas fa-download"></i> Download
                         </a>
                         <?php endif; ?>
                         <?php if (can_report()): ?>
                         <a href="reports.php?evidence_id=<?= $ev['id'] ?>" class="btn btn-gold btn-sm">
-                            <i class="fas fa-file-plus"></i>
+                            <i class="fas fa-file-plus"></i> Report
                         </a>
                         <?php endif; ?>
                     </div>
@@ -328,7 +330,7 @@ $csrf = csrf_token();
             </tr>
             <?php endforeach; ?>
             </tbody>
-        </table>
+        </table></div>
         </div>
         <?php endif; ?>
     </div>
@@ -448,5 +450,6 @@ function toggleRep(id){
     else{c.style.display='none';i.className='fas fa-chevron-down';}
 }
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

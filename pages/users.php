@@ -3,9 +3,10 @@
  * DigiCustody – Admin User Management
  * Save to: /var/www/html/digicustody/pages/users.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 require_role('admin');
 
@@ -125,6 +126,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = "Password reset. Temporary password: <code style='background:var(--surface2);padding:2px 8px;border-radius:4px;color:var(--gold)'>$temp_pass</code>";
         }
 
+        // ── Delete User ──
+        elseif ($action === 'delete_user') {
+            $target_id = (int)$_POST['target_id'];
+            if ($target_id === $uid) { $err = 'You cannot delete your own account.'; }
+            else {
+                $stmt = $pdo->prepare("SELECT full_name,username,email FROM users WHERE id=?");
+                $stmt->execute([$target_id]);
+                $target = $stmt->fetch();
+                if ($target) {
+                    $s2 = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE uploaded_by=?");
+                    $s2->execute([$target_id]);
+                    $ev_count = (int)$s2->fetchColumn();
+
+                    $s3 = $pdo->prepare("SELECT COUNT(*) FROM cases WHERE created_by=?");
+                    $s3->execute([$target_id]);
+                    $case_count = (int)$s3->fetchColumn();
+
+                    $pdo->prepare("DELETE FROM case_access WHERE user_id=?")->execute([$target_id]);
+                    $pdo->prepare("DELETE FROM notifications WHERE user_id=?")->execute([$target_id]);
+                    $pdo->prepare("DELETE FROM password_resets WHERE email=?")->execute([$target['email']]);
+                    $pdo->prepare("DELETE FROM login_attempts WHERE username=?")->execute([$target['username']]);
+                    $pdo->prepare("UPDATE evidence SET current_custodian=NULL WHERE current_custodian=?")->execute([$target_id]);
+                    $pdo->prepare("UPDATE cases SET assigned_to=NULL WHERE assigned_to=?")->execute([$target_id]);
+                    $pdo->prepare("DELETE FROM users WHERE id=?")->execute([$target_id]);
+                    audit_log($pdo,$uid,$_SESSION['username'],'admin','account_deleted',
+                        'user',$target_id,$target['full_name'],
+                        "Account deleted: {$target['full_name']} ({$ev_count} evidence, {$case_count} cases)");
+                    $msg = "User <strong>{$target['full_name']}</strong> and all associated data deleted successfully.";
+                }
+            }
+        }
+
         if ($err === '') header('Location: users.php?msg='.urlencode(strip_tags($msg)));
     }
 }
@@ -188,7 +221,7 @@ function si($col) {
 <title>User Management — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .filter-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:20px;}
@@ -234,6 +267,28 @@ function si($col) {
 .dc-table th:nth-child(5){width:100px}
 .dc-table th:nth-child(6){width:120px}
 .dc-table th:nth-child(7){width:180px}
+/* toast */
+.toast-container{position:fixed;top:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:10px;pointer-events:none;}
+.toast{pointer-events:auto;background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:16px 20px;min-width:320px;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,0.6);display:flex;align-items:flex-start;gap:12px;animation:toastIn .4s cubic-bezier(.22,.68,0,1.15) both;}
+.toast.removing{animation:toastOut .3s ease both;}
+@keyframes toastIn{from{opacity:0;transform:translateX(60px)}to{opacity:1;transform:translateX(0)}}
+@keyframes toastOut{to{opacity:0;transform:translateX(60px)}}
+.toast-icon{width:36px;height:36px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px;}
+.toast.success .toast-icon{background:rgba(74,222,128,0.12);color:var(--success);}
+.toast.error .toast-icon{background:rgba(248,113,113,0.12);color:var(--danger);}
+.toast.warning .toast-icon{background:rgba(251,191,36,0.12);color:var(--warning);}
+.toast.info .toast-icon{background:rgba(96,165,250,0.12);color:var(--info);}
+.toast-body{flex:1;min-width:0;}
+.toast-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:2px;}
+.toast-msg{font-size:12.5px;color:var(--muted);line-height:1.5;}
+.toast-close{background:none;border:none;color:var(--dim);cursor:pointer;font-size:13px;padding:2px;flex-shrink:0;transition:color .2s;}
+.toast-close:hover{color:var(--text);}
+.toast-bar{position:absolute;bottom:0;left:0;height:3px;border-radius:0 0 var(--radius-lg) var(--radius-lg);animation:toastBar 4s linear forwards;}
+.toast.success .toast-bar{background:var(--success);}
+.toast.error .toast-bar{background:var(--danger);}
+.toast.warning .toast-bar{background:var(--warning);}
+.toast.info .toast-bar{background:var(--info);}
+@keyframes toastBar{from{width:100%}to{width:0%}}
 </style>
 </head>
 <body>
@@ -246,7 +301,8 @@ function si($col) {
 <!-- Header -->
 <div class="page-header">
     <div>
-        <h1>User Management</h1>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <h1 style="margin-top:8px;">User Management</h1>
         <p><?= $total_users ?> registered users &nbsp;·&nbsp; <?= $active_users ?> active</p>
     </div>
     <button class="btn btn-gold" onclick="openCreateModal()">
@@ -330,7 +386,7 @@ function si($col) {
     <div class="empty-state"><i class="fas fa-users"></i><p>No users found.</p></div>
     <?php else: ?>
     <div style="overflow-x:auto;">
-    <table class="dc-table" style="table-layout:fixed;width:100%">
+    <div class="table-responsive"><table class="dc-table" style="table-layout:fixed;width:100%">
         <thead><tr>
             <th><a href="<?= su('full_name') ?>" class="sort-th">User <?= si('full_name') ?></a></th>
             <th><a href="<?= su('role') ?>" class="sort-th">Role <?= si('role') ?></a></th>
@@ -348,7 +404,7 @@ function si($col) {
             $ev_count = (int)$ev_count->fetchColumn();
         ?>
         <tr>
-            <td>
+            <td data-label="User">
                 <div style="display:flex;align-items:center;gap:10px;">
                     <div class="user-avatar <?= $u['status']==='suspended'?'suspended':'' ?>">
                         <?= strtoupper(substr($u['full_name'],0,2)) ?>
@@ -365,20 +421,20 @@ function si($col) {
                     </div>
                 </div>
             </td>
-            <td><?= role_badge($u['role']) ?></td>
-            <td><?= status_badge($u['status']) ?></td>
-            <td>
+            <td data-label="Role"><?= role_badge($u['role']) ?></td>
+            <td data-label="Status"><?= status_badge($u['status']) ?></td>
+            <td data-label="Department">
                 <p style="font-size:12.5px;color:var(--text)"><?= e($u['department'] ?: '—') ?></p>
                 <?php if ($u['badge_number']): ?>
                 <p style="font-size:11px;color:var(--dim)"><?= e($u['badge_number']) ?></p>
                 <?php endif; ?>
             </td>
-            <td>
+            <td data-label="Evidence">
                 <span class="badge <?= $ev_count>0?'badge-blue':'badge-gray' ?>">
                     <i class="fas fa-database" style="font-size:9px"></i> <?= $ev_count ?>
                 </span>
             </td>
-            <td>
+            <td data-label="Last Login">
                 <?php if ($u['last_login']): ?>
                 <span style="font-size:12px;color:var(--muted)"><?= date('M j, Y', strtotime($u['last_login'])) ?></span><br>
                 <span style="font-size:11px;color:var(--dim)"><?= date('H:i', strtotime($u['last_login'])) ?></span>
@@ -386,37 +442,30 @@ function si($col) {
                 <span style="font-size:12px;color:var(--dim)">Never logged in</span>
                 <?php endif; ?>
             </td>
-            <td>
+            <td data-label="Actions">
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
                     <button class="btn btn-outline btn-sm"
                         onclick="openEditModal(<?= htmlspecialchars(json_encode($u), ENT_QUOTES) ?>)">
                         <i class="fas fa-pen"></i> Edit
                     </button>
                     <?php if ($u['id'] !== $uid): ?>
-                    <form method="POST" style="display:inline" onsubmit="return confirm('<?= $u['status']==='active'?'Suspend':'Reactivate' ?> this user?')">
-                        <input type="hidden" name="action"      value="toggle_status">
-                        <input type="hidden" name="target_id"   value="<?= $u['id'] ?>">
-                        <input type="hidden" name="csrf_token"  value="<?= $csrf ?>">
-                        <button type="submit" class="btn <?= $u['status']==='active'?'btn-danger':'btn-success' ?> btn-sm">
-                            <i class="fas <?= $u['status']==='active'?'fa-ban':'fa-circle-check' ?>"></i>
-                            <?= $u['status']==='active'?'Suspend':'Activate' ?>
-                        </button>
-                    </form>
-                    <form method="POST" style="display:inline" onsubmit="return confirm('Reset password for this user?')">
-                        <input type="hidden" name="action"     value="reset_password">
-                        <input type="hidden" name="target_id"  value="<?= $u['id'] ?>">
-                        <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
-                        <button type="submit" class="btn btn-outline btn-sm">
-                            <i class="fas fa-key"></i> Reset PW
-                        </button>
-                    </form>
+                    <button class="btn <?= $u['status']==='active'?'btn-danger':'btn-success' ?> btn-sm" onclick="openConfirmModal('toggle_status',<?= $u['id'] ?>,'<?= $u['status']==='active'?'Suspend':'Activate' ?>','<?= e(addslashes($u['full_name'])) ?>','<?= $u['status']==='active'?'Suspend':'Reactivate' ?> this user?')">
+                        <i class="fas <?= $u['status']==='active'?'fa-ban':'fa-circle-check' ?>"></i>
+                        <?= $u['status']==='active'?'Suspend':'Activate' ?>
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="openConfirmModal('reset_password',<?= $u['id'] ?>,'Reset Password','<?= e(addslashes($u['full_name'])) ?>','Reset password for this user? A temporary password will be generated.')">
+                        <i class="fas fa-key"></i> Reset PW
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="openDeleteModal(<?= $u['id'] ?>,'<?= e(addslashes($u['full_name'])) ?>')">
+                        <i class="fas fa-trash"></i> Delete
+                    </button>
                     <?php endif; ?>
                 </div>
             </td>
         </tr>
         <?php endforeach; ?>
         </tbody>
-    </table>
+    </table></div>
     </div>
     <?php endif; ?>
 </div>
@@ -572,6 +621,74 @@ function si($col) {
     </div>
 </div>
 
+<!-- ══ DELETE USER MODAL ══ -->
+<div class="overlay" id="deleteModal" style="display:none" onclick="ovClose('deleteModal',event)">
+    <div class="modal" style="max-width:460px">
+        <div class="modal-head">
+            <h3 style="color:var(--danger)"><i class="fas fa-triangle-exclamation"></i> Delete <span style="color:var(--danger)">User</span></h3>
+            <button class="xbtn" onclick="closeModal('deleteModal')"><i class="fas fa-xmark"></i></button>
+        </div>
+        <form method="POST" action="users.php">
+            <input type="hidden" name="action"     value="delete_user">
+            <input type="hidden" name="target_id"  id="deleteTargetId">
+            <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
+            <div class="modal-body" style="text-align:center;">
+                <div style="width:64px;height:64px;border-radius:50%;background:rgba(248,113,113,0.1);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+                    <i class="fas fa-trash" style="font-size:28px;color:var(--danger)"></i>
+                </div>
+                <p style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:8px;">
+                    Are you sure you want to delete <span id="deleteUserName" style="color:var(--danger)"></span>?
+                </p>
+                <p style="font-size:13px;color:var(--muted);line-height:1.6;">
+                    This action is <strong style="color:var(--danger)">permanent</strong> and cannot be undone.<br>
+                    All associated data (case access, notifications, login history) will be removed.
+                    Evidence and cases created by this user will be <strong>preserved</strong>.
+                </p>
+                <div style="margin-top:16px;padding:10px 14px;background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.15);border-radius:8px;font-size:12px;color:var(--muted);text-align:left;">
+                    <i class="fas fa-info-circle" style="color:var(--danger);margin-right:6px"></i>
+                    Evidence uploaded by this user will have their custodian set to NULL.<br>
+                    Cases created by this user will have their assignment cleared.
+                </div>
+            </div>
+            <div class="modal-foot">
+                <button type="button" class="btn btn-outline" onclick="closeModal('deleteModal')">Cancel</button>
+                <button type="submit" class="btn btn-danger"><i class="fas fa-trash"></i> Delete Permanently</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ══ GENERIC CONFIRM MODAL ══ -->
+<div class="overlay" id="confirmModal" style="display:none" onclick="ovClose('confirmModal',event)">
+    <div class="modal" style="max-width:440px">
+        <div class="modal-head">
+            <h3 id="confirmTitle" style="color:var(--warning)"><i class="fas fa-shield-halved"></i> <span id="confirmTitleText"></span></h3>
+            <button class="xbtn" onclick="closeModal('confirmModal')"><i class="fas fa-xmark"></i></button>
+        </div>
+        <form method="POST" action="users.php" id="confirmForm">
+            <input type="hidden" name="action"     id="confirmAction">
+            <input type="hidden" name="target_id"  id="confirmTargetId">
+            <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
+            <div class="modal-body" style="text-align:center;">
+                <div id="confirmIconWrap" style="width:64px;height:64px;border-radius:50%;background:rgba(251,191,36,0.1);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+                    <i class="fas fa-question" style="font-size:28px;color:var(--warning)"></i>
+                </div>
+                <p style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:8px;">
+                    <span id="confirmName"></span>
+                </p>
+                <p id="confirmMsg" style="font-size:13px;color:var(--muted);line-height:1.6;"></p>
+            </div>
+            <div class="modal-foot">
+                <button type="button" class="btn btn-outline" onclick="closeModal('confirmModal')">Cancel</button>
+                <button type="submit" class="btn btn-warning" id="confirmSubmitBtn"><i class="fas fa-check" id="confirmBtnIcon"></i> <span id="confirmBtnText"></span></button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ══ TOAST CONTAINER ══ -->
+<div class="toast-container" id="toastContainer"></div>
+
 <script>
 // Sidebar
 function toggleSidebar(){const sb=document.getElementById('sidebar'),ma=document.getElementById('mainArea');if(window.innerWidth<=900){sb.classList.toggle('mobile-open');}else{sb.classList.toggle('collapsed');ma.classList.toggle('collapsed');}localStorage.setItem('sb_collapsed',sb.classList.contains('collapsed')?'1':'0');}
@@ -599,10 +716,61 @@ function openEditModal(u){
     document.getElementById('editModal').style.display = 'flex';
 }
 
+function openDeleteModal(id,name){
+    document.getElementById('deleteTargetId').value = id;
+    document.getElementById('deleteUserName').textContent = name;
+    document.getElementById('deleteModal').style.display = 'flex';
+}
+
+function openConfirmModal(action,id,title,name,msg){
+    document.getElementById('confirmAction').value = action;
+    document.getElementById('confirmTargetId').value = id;
+    document.getElementById('confirmTitleText').textContent = title;
+    document.getElementById('confirmName').textContent = name;
+    document.getElementById('confirmMsg').textContent = msg;
+    document.getElementById('confirmBtnText').textContent = title;
+    if(action==='delete_user'){
+        document.getElementById('confirmIconWrap').style.background='rgba(248,113,113,0.1)';
+        document.getElementById('confirmIconWrap').innerHTML='<i class="fas fa-trash" style="font-size:28px;color:var(--danger)"></i>';
+        document.getElementById('confirmTitle').style.color='var(--danger)';
+        document.getElementById('confirmSubmitBtn').className='btn btn-danger';
+        document.getElementById('confirmBtnIcon').className='fas fa-trash';
+    } else if(action==='toggle_status'){
+        document.getElementById('confirmIconWrap').style.background='rgba(96,165,250,0.1)';
+        document.getElementById('confirmIconWrap').innerHTML='<i class="fas fa-user-shield" style="font-size:28px;color:var(--info)"></i>';
+        document.getElementById('confirmTitle').style.color='var(--info)';
+        document.getElementById('confirmSubmitBtn').className='btn btn-outline';
+        document.getElementById('confirmBtnIcon').className='fas fa-check';
+    } else {
+        document.getElementById('confirmIconWrap').style.background='rgba(251,191,36,0.1)';
+        document.getElementById('confirmIconWrap').innerHTML='<i class="fas fa-key" style="font-size:28px;color:var(--warning)"></i>';
+        document.getElementById('confirmTitle').style.color='var(--warning)';
+        document.getElementById('confirmSubmitBtn').className='btn btn-warning';
+        document.getElementById('confirmBtnIcon').className='fas fa-key';
+    }
+    document.getElementById('confirmModal').style.display = 'flex';
+}
+
 function togglePw(inputId, iconId){
     const i=document.getElementById(inputId), ic=document.getElementById(iconId);
     i.type=i.type==='password'?'text':'password';
     ic.classList.toggle('fa-eye'); ic.classList.toggle('fa-eye-slash');
+}
+
+// Toast notifications
+function showToast(type,title,msg,duration){
+    duration=duration||4000;
+    var icons={success:'fa-circle-check',error:'fa-circle-xmark',warning:'fa-triangle-exclamation',info:'fa-circle-info'};
+    var t=document.createElement('div');
+    t.className='toast '+type;
+    t.innerHTML='<div class="toast-icon"><i class="fas '+(icons[type]||icons.info)+'"></i></div><div class="toast-body"><div class="toast-title">'+title+'</div><div class="toast-msg">'+msg+'</div></div><button class="toast-close" onclick="removeToast(this.parentElement)"><i class="fas fa-xmark"></i></button><div class="toast-bar" style="animation-duration:'+(duration/1000)+'s"></div>';
+    document.getElementById('toastContainer').appendChild(t);
+    setTimeout(function(){removeToast(t);},duration);
+}
+function removeToast(t){
+    if(!t||t.classList.contains('removing'))return;
+    t.classList.add('removing');
+    setTimeout(function(){if(t.parentElement)t.parentElement.removeChild(t);},300);
 }
 
 // Live search
@@ -613,6 +781,14 @@ if(si) si.addEventListener('input',function(){clearTimeout(st);st=setTimeout(fun
 <?php if ($edit_user): ?>
 openEditModal(<?= json_encode($edit_user) ?>);
 <?php endif; ?>
+
+<?php if ($msg): ?>
+showToast('success','Success','<?= addslashes($msg) ?>');
+<?php endif; ?>
+<?php if ($err): ?>
+showToast('error','Error','<?= addslashes($err) ?>');
+<?php endif; ?>
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

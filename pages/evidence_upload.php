@@ -3,12 +3,13 @@
  * DigiCustody – Evidence Upload (Full Chain of Custody)
  * Save to: /var/www/html/digicustody/pages/evidence_upload.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
-if (is_viewer()) {
+if (!is_admin() && !is_investigator()) {
     header('Location: ../dashboard.php?error=access_denied'); exit;
 }
 
@@ -25,14 +26,37 @@ $cases = $pdo->query("
     ORDER BY created_at DESC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
+// Fetch active analysts with workload info (one case at a time)
+$analysts = $pdo->query("
+    SELECT u.id, u.full_name, u.username, u.department,
+           (SELECT COUNT(DISTINCT c.id) FROM cases c
+            WHERE c.assigned_analyst = u.id AND c.status IN ('open','under_investigation')) AS active_cases,
+           (SELECT COUNT(DISTINCT e.id) FROM evidence e
+            WHERE e.assigned_analyst = u.id AND e.analysis_status IN ('assigned','in_progress')) AS active_evidence
+    FROM users u
+    WHERE u.role='analyst' AND u.status='active'
+    ORDER BY u.full_name
+")->fetchAll(PDO::FETCH_ASSOC);
+
 // ── Handle new case creation (AJAX) ──────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'create_case') {
     header('Content-Type: application/json');
+    
+    if (!verify_csrf($_POST['csrf_token'] ?? '')) {
+        echo json_encode(['success'=>false,'error'=>'Security token mismatch.']); exit;
+    }
+    
+    // Rate limit case creation
+    if (!rate_limit_check($pdo, 'create_case', $_SERVER['REMOTE_ADDR'] ?? 'unknown', 10, 60)) {
+        echo json_encode(['success'=>false,'error'=>'Too many attempts. Please wait.']); exit;
+    }
+    
     $title    = trim($_POST['case_title'] ?? '');
     $desc     = trim($_POST['case_description'] ?? '');
     $type     = trim($_POST['case_type'] ?? '');
     $priority = in_array($_POST['priority']??'',['low','medium','high','critical']) ? $_POST['priority'] : 'medium';
     if (empty($title)) { echo json_encode(['success'=>false,'error'=>'Case title is required.']); exit; }
+    if (strlen($title) > 255) { echo json_encode(['success'=>false,'error'=>'Case title too long.']); exit; }
     $cn = generate_case_number($pdo);
     $pdo->prepare("INSERT INTO cases (case_number,case_title,description,case_type,priority,status,created_by) VALUES(?,?,?,?,?,'open',?)")
         ->execute([$cn,$title,$desc,$type,$priority,$uid]);
@@ -45,6 +69,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
 // ── Handle evidence upload (AJAX per file) ───────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upload_file') {
     header('Content-Type: application/json');
+
+    // Rate limit uploads
+    if (!rate_limit_check($pdo, 'upload', $_SERVER['REMOTE_ADDR'] ?? 'unknown', 30, 60)) {
+        echo json_encode(['success'=>false,'error'=>'Too many upload attempts. Please wait.']); exit;
+    }
 
     // ── Core fields ──
     $case_id         = (int)($_POST['case_id'] ?? 0);
@@ -82,6 +111,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     // ── Witness ──
     $witness_name         = trim($_POST['witness_name'] ?? '');
     $witness_badge        = trim($_POST['witness_badge'] ?? '');
+    $witness2_name        = trim($_POST['witness2_name'] ?? '');
+    $witness2_badge       = trim($_POST['witness2_badge'] ?? '');
+
+    // ── Legal authority ──
+    $legal_basis          = trim($_POST['legal_basis'] ?? '');
+    $warrant_number       = trim($_POST['warrant_number'] ?? '');
+    $issuing_court        = trim($_POST['issuing_court'] ?? '');
+    $ob_number            = trim($_POST['ob_number'] ?? '');
+
+    // ── GPS & Environment ──
+    $gps_lat              = trim($_POST['gps_lat'] ?? '');
+    $gps_lon              = trim($_POST['gps_lon'] ?? '');
+    $scene_temp           = trim($_POST['scene_temp'] ?? '');
+    $scene_weather        = trim($_POST['scene_weather'] ?? '');
+
+    // ── Relinquishment & Receipt ──
+    $relinquished_by      = trim($_POST['relinquished_by'] ?? '');
+    $relinquished_by_role = trim($_POST['relinquished_by_role'] ?? '');
+    $relinquished_dt      = trim($_POST['relinquished_datetime'] ?? '');
+    $relinquished_loc     = trim($_POST['relinquished_location'] ?? '');
+    $received_by          = trim($_POST['received_by'] ?? $_SESSION['full_name']);
+    $received_dt          = trim($_POST['received_datetime'] ?? '');
+
+    // ── Transportation & Storage ──
+    $transport_method     = trim($_POST['transport_method'] ?? '');
+    $transport_dt         = trim($_POST['transport_datetime'] ?? '');
+    $storage_location     = trim($_POST['storage_location'] ?? '');
+    $storage_conditions   = trim($_POST['storage_conditions'] ?? '');
+
+    // ── Photo / Media References ──
+    $photo_ref            = trim($_POST['photo_ref'] ?? '');
+    $video_ref            = trim($_POST['video_ref'] ?? '');
+    $sketch_ref           = trim($_POST['sketch_ref'] ?? '');
+    $other_media_ref      = trim($_POST['other_media_ref'] ?? '');
+
+    // ── Network Evidence Specifics ──
+    $ip_address           = trim($_POST['ip_address'] ?? '');
+    $mac_address          = trim($_POST['mac_address'] ?? '');
+    $network_ssid         = trim($_POST['network_ssid'] ?? '');
+    $hostname             = trim($_POST['hostname'] ?? '');
+
+    // ── Handling Precautions ──
+    $handle_fragile       = isset($_POST['handle_fragile']) ? 'Yes' : 'No';
+    $handle_emf           = isset($_POST['handle_emf']) ? 'Yes' : 'No';
+    $handle_temp          = isset($_POST['handle_temp']) ? 'Yes' : 'No';
+    $handle_bio           = isset($_POST['handle_bio']) ? 'Yes' : 'No';
+    $handle_remote_wipe   = isset($_POST['handle_remote']) ? 'Yes' : 'No';
+    $handle_encrypted     = isset($_POST['handle_encrypted']) ? 'Yes' : 'No';
 
     // ── Notes ──
     $collection_notes     = trim($_POST['collection_notes'] ?? '');
@@ -121,8 +198,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     if ($witness_name)         $full_coc_notes .= "Witness: $witness_name";
     if ($witness_badge)        $full_coc_notes .= " (Badge: $witness_badge)";
     if ($witness_name)         $full_coc_notes .= "\n";
+    if ($witness2_name)        $full_coc_notes .= "Witness 2: $witness2_name";
+    if ($witness2_badge)       $full_coc_notes .= " (Badge: $witness2_badge)";
+    if ($witness2_name)        $full_coc_notes .= "\n";
     if ($collection_notes)     $full_coc_notes .= "Collection notes: $collection_notes\n";
     if ($chain_of_custody_notes) $full_coc_notes .= "COC notes: $chain_of_custody_notes\n";
+    if ($legal_basis)          $full_coc_notes .= "Legal basis: $legal_basis\n";
+    if ($warrant_number)       $full_coc_notes .= "Warrant/Order: $warrant_number\n";
+    if ($issuing_court)        $full_coc_notes .= "Issuing court: $issuing_court\n";
+    if ($ob_number)            $full_coc_notes .= "OB/Case number: $ob_number\n";
+    if ($gps_lat && $gps_lon)  $full_coc_notes .= "GPS: $gps_lat, $gps_lon\n";
+    if ($scene_temp)           $full_coc_notes .= "Temperature: ${scene_temp}°C\n";
+    if ($scene_weather)        $full_coc_notes .= "Environment: $scene_weather\n";
+    if ($relinquished_by)      $full_coc_notes .= "Relinquished by: $relinquished_by";
+    if ($relinquished_by_role) $full_coc_notes .= " ($relinquished_by_role)";
+    if ($relinquished_by)      $full_coc_notes .= "\n";
+    if ($relinquished_dt)      $full_coc_notes .= "Relinquished at: $relinquished_dt\n";
+    if ($relinquished_loc)     $full_coc_notes .= "Relinquished location: $relinquished_loc\n";
+    if ($received_by)          $full_coc_notes .= "Received by: $received_by\n";
+    if ($received_dt)          $full_coc_notes .= "Received at: $received_dt\n";
+    if ($transport_method)     $full_coc_notes .= "Transport: $transport_method\n";
+    if ($transport_dt)         $full_coc_notes .= "Transport date: $transport_dt\n";
+    if ($storage_location)     $full_coc_notes .= "Storage: $storage_location\n";
+    if ($storage_conditions)   $full_coc_notes .= "Storage conditions: $storage_conditions\n";
+    if ($photo_ref)            $full_coc_notes .= "Photo ref: $photo_ref\n";
+    if ($video_ref)            $full_coc_notes .= "Video ref: $video_ref\n";
+    if ($sketch_ref)           $full_coc_notes .= "Sketch ref: $sketch_ref\n";
+    if ($other_media_ref)      $full_coc_notes .= "Other media: $other_media_ref\n";
+    if ($ip_address)           $full_coc_notes .= "IP address(es): $ip_address\n";
+    if ($mac_address)          $full_coc_notes .= "MAC address(es): $mac_address\n";
+    if ($network_ssid)         $full_coc_notes .= "Network SSID: $network_ssid\n";
+    if ($hostname)             $full_coc_notes .= "Hostname: $hostname\n";
+    $precautions = [];
+    if ($handle_fragile)       $precautions[] = 'Fragile';
+    if ($handle_emf)           $precautions[] = 'EMF/RF shielded';
+    if ($handle_temp)          $precautions[] = 'Temperature sensitive';
+    if ($handle_bio)           $precautions[] = 'Biohazard';
+    if ($handle_remote_wipe)   $precautions[] = 'Remote wipe risk';
+    if ($handle_encrypted)     $precautions[] = 'Encrypted';
+    if (!empty($precautions))  $full_coc_notes .= "Precautions: " . implode(', ', $precautions) . "\n";
 
     $ev_number = generate_evidence_number($pdo);
     $upload    = handle_evidence_upload($_FILES['ev_file'], $ev_number);
@@ -161,12 +275,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
             'write_blocker'=>$write_blocker_used, 'device'=>$original_device,
             'serial'=>$device_serial, 'witness'=>$witness_name,
             'condition'=>$condition_on_receipt, 'seal'=>$seal_number,
+            'legal_basis'=>$legal_basis, 'warrant_number'=>$warrant_number,
+            'issuing_court'=>$issuing_court, 'ob_number'=>$ob_number,
+            'gps_lat'=>$gps_lat, 'gps_lon'=>$gps_lon,
+            'relinquished_by'=>$relinquished_by, 'received_by'=>$received_by,
+            'transport_method'=>$transport_method, 'storage_location'=>$storage_location,
+            'ip_address'=>$ip_address, 'mac_address'=>$mac_address,
+            'network_ssid'=>$network_ssid, 'hostname'=>$hostname,
+            'precautions'=>array_filter([
+                'fragile'=>$handle_fragile==='Yes','emf'=>$handle_emf==='Yes',
+                'temp'=>$handle_temp==='Yes','bio'=>$handle_bio==='Yes',
+                'remote_wipe'=>$handle_remote_wipe==='Yes','encrypted'=>$handle_encrypted==='Yes',
+            ]),
         ]);
 
     // Notify admins
     foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm) {
         send_notification($pdo,$adm['id'],'New Evidence Uploaded',
             "$ev_number uploaded by {$_SESSION['full_name']}",'info','evidence',$ev_id);
+    }
+
+    // Assign to analyst if selected
+    $assigned_analyst_id = (int)($_POST['assigned_analyst'] ?? 0);
+    $assignment_notes = trim($_POST['assignment_notes'] ?? '');
+    if ($assigned_analyst_id > 0) {
+        // Check analyst is not already assigned to an active case
+        $stmt = $pdo->prepare("
+            SELECT COUNT(DISTINCT c.id) as cnt
+            FROM cases c
+            WHERE c.assigned_analyst = ? AND c.status IN ('open','under_investigation')
+        ");
+        $stmt->execute([$assigned_analyst_id]);
+        $active = (int)$stmt->fetchColumn();
+        if ($active > 0) {
+            echo json_encode(['success'=>false,'error'=>'This analyst is already assigned to an active case. Please wait for them to complete their current work or select another analyst.']); exit;
+        }
+
+        // Grant case access to analyst
+        grant_case_access($pdo, $case_id, $assigned_analyst_id, $uid);
+        // Assign case-level analyst
+        $pdo->prepare("UPDATE cases SET assigned_analyst=?, updated_at=NOW() WHERE id=?")
+            ->execute([$assigned_analyst_id, $case_id]);
+        // Update evidence with analyst assignment
+        $pdo->prepare("UPDATE evidence SET assigned_analyst=?, assignment_notes=?, assigned_at=NOW(), analysis_status='assigned', status='in_analysis' WHERE id=?")
+            ->execute([$assigned_analyst_id, $assignment_notes, $ev_id]);
+        // Log assignment
+        audit_log($pdo,$uid,$_SESSION['username'],$role,'evidence_assigned','evidence',$ev_id,$ev_number,
+            "Evidence assigned to analyst for investigation",
+            $_SERVER['REMOTE_ADDR']??'', $_SERVER['HTTP_USER_AGENT']??'',
+            ['assigned_to'=>$assigned_analyst_id,'notes'=>$assignment_notes]);
+        // Notify analyst
+        $stmt = $pdo->prepare("SELECT full_name FROM users WHERE id=?");
+        $stmt->execute([$assigned_analyst_id]);
+        $analyst = $stmt->fetch();
+        if ($analyst) {
+            send_notification($pdo,$assigned_analyst_id,'Evidence Assigned for Investigation',
+                "$ev_number ($title) has been assigned to you by {$_SESSION['full_name']}. ".($assignment_notes?"Notes: $assignment_notes":''),
+                'warning','evidence',$ev_id);
+        }
     }
 
     echo json_encode([
@@ -177,6 +343,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         'md5'             => $upload['md5'],
         'file_size'       => format_filesize($upload['file_size']),
         'mime_type'       => $upload['mime_type'],
+        'assigned_to'     => $assigned_analyst_id > 0 ? $assigned_analyst_id : null,
     ]);
     exit;
 }
@@ -189,7 +356,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 <title>Upload Evidence — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 /* ── form sections ── */
@@ -288,6 +455,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 .summary-table td{padding:7px 0;border-bottom:1px solid var(--border);color:var(--text);}
 .summary-table td:first-child{color:var(--muted);width:40%;padding-right:10px;}
 .summary-table tr:last-child td{border-bottom:none;}
+.coc-row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--border);font-size:12px;}
+.coc-row:last-child{border-bottom:none;}
+.coc-label{color:var(--muted);min-width:140px;flex-shrink:0;font-weight:500;}
+.coc-val{color:var(--text);flex:1;word-break:break-word;}
 @media(max-width:680px){.grid-2,.grid-3{grid-template-columns:1fr;}.fi-meta{grid-template-columns:1fr;}.fi-meta .full{grid-column:span 1;}.progress-steps{display:none;}}
 </style>
 </head>
@@ -304,7 +475,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         <h1>Upload Evidence</h1>
         <p>All uploads are hashed, logged and permanently recorded in the chain of custody</p>
     </div>
-    <a href="../dashboard.php" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Dashboard</a>
+    <div style="display:flex;gap:10px;">
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <a href="../dashboard.php" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Dashboard</a>
+    </div>
 </div>
 
 <!-- Progress steps -->
@@ -316,17 +490,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     <div class="ps-line" id="pl1"></div>
     <div class="ps-step">
         <div class="ps-num pending" id="ps2">2</div>
-        <span class="ps-label" id="psl2">Collection Details</span>
+        <span class="ps-label" id="psl2">Assign</span>
     </div>
     <div class="ps-line" id="pl2"></div>
     <div class="ps-step">
         <div class="ps-num pending" id="ps3">3</div>
-        <span class="ps-label" id="psl3">Files</span>
+        <span class="ps-label" id="psl3">Collection Details</span>
     </div>
     <div class="ps-line" id="pl3"></div>
     <div class="ps-step">
         <div class="ps-num pending" id="ps4">4</div>
-        <span class="ps-label" id="psl4">Upload</span>
+        <span class="ps-label" id="psl4">Files</span>
+    </div>
+    <div class="ps-line" id="pl4"></div>
+    <div class="ps-step">
+        <div class="ps-num pending" id="ps5">5</div>
+        <span class="ps-label" id="psl5">Upload</span>
     </div>
 </div>
 
@@ -363,6 +542,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                         <p style="font-size:12.5px;color:var(--muted);margin-top:3px" id="selCaseTitle"></p>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══ SECTION 1.5: ASSIGNMENT ══ -->
+<div class="form-section" id="sec-assignment" style="opacity:.5;pointer-events:none;">
+    <div class="form-section-head">
+        <i class="fas fa-user-check"></i>
+        <h3>Step 2 — Assign to Analyst</h3>
+        <span style="font-size:11.5px;color:var(--muted);margin-left:auto">Optional — assign for investigation</span>
+    </div>
+    <div class="form-section-body">
+        <div class="grid-2">
+            <div class="field">
+                <label>Assign to Analyst</label>
+                <select id="assignAnalyst">
+                    <option value="">— Skip assignment (assign later) —</option>
+                    <?php foreach($analysts as $a):
+                        $busy = $a['active_cases'] > 0;
+                    ?>
+                    <option value="<?= $a['id'] ?>"
+                        data-name="<?= e($a['full_name']) ?>"
+                        data-dept="<?= e($a['department'] ?? 'N/A') ?>"
+                        <?= $busy ? 'disabled' : '' ?>>
+                        <?= e($a['full_name']) ?> (<?= e($a['username']) ?>)<?= $busy ? ' — BUSY (on a case)' : ' — Available' ?><?= $a['department']?' · '.e($a['department']):'' ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <p class="hint">Analysts can only work on one case at a time. Busy analysts are unavailable until their current case is complete.</p>
+            </div>
+            <div class="field">
+                <label>Assignment Notes</label>
+                <textarea id="assignmentNotes" placeholder="What should the analyst focus on? Any special instructions?" style="min-height:80px;"></textarea>
             </div>
         </div>
     </div>
@@ -510,17 +723,215 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
             </label>
         </div>
 
+        <!-- Legal authority -->
+        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-gavel"></i> Legal Authority</p>
+        <div class="grid-2" style="margin-bottom:16px;">
+            <div class="field">
+                <label>Legal Basis for Collection</label>
+                <select id="legalBasis">
+                    <option value="">— Select —</option>
+                    <option>Search Warrant</option>
+                    <option>Court Order</option>
+                    <option>Consent (Written)</option>
+                    <option>Consent (Verbal)</option>
+                    <option>Exigent Circumstances</option>
+                    <option>Plain View Doctrine</option>
+                    <option>Incident to Arrest</option>
+                    <option>Administrative Subpoena</option>
+                    <option>Voluntary Surrender</option>
+                    <option>Other</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>Warrant / Order Number</label>
+                <input type="text" id="warrantNumber" placeholder="e.g. CW-2026-00456">
+            </div>
+            <div class="field">
+                <label>Issuing Court / Authority</label>
+                <input type="text" id="issuingCourt" placeholder="e.g. Chief Magistrate's Court, Nairobi">
+            </div>
+            <div class="field">
+                <label>Case / OB Number</label>
+                <input type="text" id="obNumber" placeholder="e.g. OB 123/2026">
+            </div>
+        </div>
+
+        <!-- GPS & Environment -->
+        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-location-crosshairs"></i> GPS &amp; Environmental Conditions</p>
+        <div class="grid-3" style="margin-bottom:16px;">
+            <div class="field">
+                <label>GPS Latitude</label>
+                <input type="text" id="gpsLat" placeholder="e.g. -1.2921">
+            </div>
+            <div class="field">
+                <label>GPS Longitude</label>
+                <input type="text" id="gpsLon" placeholder="e.g. 36.8219">
+            </div>
+            <div class="field">
+                <button type="button" class="btn btn-outline btn-sm" onclick="getGPS()" id="gpsBtn" style="margin-top:22px;">
+                    <i class="fas fa-location-arrow"></i> Get Current GPS
+                </button>
+            </div>
+        </div>
+        <div class="grid-2" style="margin-bottom:16px;">
+            <div class="field">
+                <label>Temperature at Scene (°C)</label>
+                <input type="text" id="sceneTemp" placeholder="e.g. 24">
+            </div>
+            <div class="field">
+                <label>Weather / Environmental Notes</label>
+                <input type="text" id="sceneWeather" placeholder="e.g. Indoor, air-conditioned">
+            </div>
+        </div>
+
         <!-- Witness -->
         <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-eye"></i> Witness Information</p>
         <div class="grid-2" style="margin-bottom:16px;">
             <div class="field">
-                <label>Witness Name</label>
+                <label>Witness 1 Name</label>
                 <input type="text" id="witnessName" placeholder="Full name of witness present">
             </div>
             <div class="field">
-                <label>Witness Badge / ID</label>
+                <label>Witness 1 Badge / ID</label>
                 <input type="text" id="witnessBadge" placeholder="Badge or ID number">
             </div>
+            <div class="field">
+                <label>Witness 2 Name</label>
+                <input type="text" id="witness2Name" placeholder="Second witness (if any)">
+            </div>
+            <div class="field">
+                <label>Witness 2 Badge / ID</label>
+                <input type="text" id="witness2Badge" placeholder="Badge or ID number">
+            </div>
+        </div>
+
+        <!-- Relinquishment & Receipt -->
+        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-handshake"></i> Relinquishment &amp; Receipt</p>
+        <div class="grid-2" style="margin-bottom:16px;">
+            <div class="field">
+                <label>Relinquished By</label>
+                <input type="text" id="relinquishedBy" placeholder="Person who handed over evidence">
+            </div>
+            <div class="field">
+                <label>Relinquished By — Title / Role</label>
+                <input type="text" id="relinquishedByRole" placeholder="e.g. IT Manager, Security Guard">
+            </div>
+            <div class="field">
+                <label>Relinquished Date &amp; Time</label>
+                <input type="datetime-local" id="relinquishedDateTime">
+            </div>
+            <div class="field">
+                <label>Relinquished At (Location)</label>
+                <input type="text" id="relinquishedLocation" placeholder="Where evidence was handed over">
+            </div>
+            <div class="field">
+                <label>Received By (Investigator)</label>
+                <input type="text" id="receivedBy" value="<?= e($_SESSION['full_name']) ?>" placeholder="Investigator who received evidence">
+            </div>
+            <div class="field">
+                <label>Received Date &amp; Time</label>
+                <input type="datetime-local" id="receivedDateTime">
+            </div>
+        </div>
+
+        <!-- Transportation -->
+        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-truck"></i> Transportation &amp; Storage</p>
+        <div class="grid-2" style="margin-bottom:16px;">
+            <div class="field">
+                <label>Transport Method</label>
+                <select id="transportMethod">
+                    <option value="">— Select —</option>
+                    <option>Hand-carried by officer</option>
+                    <option>Secured evidence vehicle</option>
+                    <option>Courier (sealed)</option>
+                    <option>Evidence locker transfer</option>
+                    <option>Digital transfer (encrypted)</option>
+                    <option>Other</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>Transport Date &amp; Time</label>
+                <input type="datetime-local" id="transportDateTime">
+            </div>
+            <div class="field">
+                <label>Storage Location</label>
+                <input type="text" id="storageLocation" placeholder="e.g. Evidence Room A, Locker 12">
+            </div>
+            <div class="field">
+                <label>Storage Conditions</label>
+                <input type="text" id="storageConditions" placeholder="e.g. Climate-controlled, secure access">
+            </div>
+        </div>
+
+        <!-- Photo / Media references -->
+        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-camera"></i> Photo &amp; Media References</p>
+        <div class="grid-2" style="margin-bottom:16px;">
+            <div class="field">
+                <label>Crime Scene Photo Reference</label>
+                <input type="text" id="photoRef" placeholder="e.g. Photos CS-001 through CS-015">
+            </div>
+            <div class="field">
+                <label>Video Recording Reference</label>
+                <input type="text" id="videoRef" placeholder="e.g. Bodycam footage VID-2026-001">
+            </div>
+            <div class="field">
+                <label>Sketch / Diagram Reference</label>
+                <input type="text" id="sketchRef" placeholder="e.g. Scene sketch SK-001">
+            </div>
+            <div class="field">
+                <label>Other Media References</label>
+                <input type="text" id="otherMediaRef" placeholder="e.g. 360° scan, drone footage">
+            </div>
+        </div>
+
+        <!-- Network evidence specifics -->
+        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-network-wired"></i> Network &amp; Digital Evidence Specifics</p>
+        <div class="grid-2" style="margin-bottom:16px;">
+            <div class="field">
+                <label>IP Address(es)</label>
+                <input type="text" id="ipAddress" placeholder="e.g. 192.168.1.100, 10.0.0.5">
+            </div>
+            <div class="field">
+                <label>MAC Address(es)</label>
+                <input type="text" id="macAddress" placeholder="e.g. AA:BB:CC:DD:EE:FF">
+            </div>
+            <div class="field">
+                <label>Network Name / SSID</label>
+                <input type="text" id="networkSSID" placeholder="e.g. Office-WiFi-5G">
+            </div>
+            <div class="field">
+                <label>Domain / Hostname</label>
+                <input type="text" id="hostname" placeholder="e.g. WORKSTATION-01, server.local">
+            </div>
+        </div>
+
+        <!-- Evidence handling precautions -->
+        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-triangle-exclamation"></i> Handling Precautions</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer;">
+                <input type="checkbox" id="handleFragile" style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;">
+                Fragile / Handle with care
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer;">
+                <input type="checkbox" id="handleEMF" style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;">
+                Shield from EMF / RF
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer;">
+                <input type="checkbox" id="handleTemp" style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;">
+                Temperature sensitive
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer;">
+                <input type="checkbox" id="handleBio" style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;">
+                Biohazard precautions
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer;">
+                <input type="checkbox" id="handleRemote" style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;">
+                Remote wipe risk — isolate
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer;">
+                <input type="checkbox" id="handleEncrypted" style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;">
+                Encrypted / password protected
+            </label>
         </div>
 
         <!-- Notes -->
@@ -644,6 +1055,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         <div style="padding:20px 24px;">
             <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Review before uploading. Once submitted, all data is permanently recorded in the chain of custody.</p>
             <ul class="confirm-list" id="confirmList"></ul>
+            <div id="cocPreview" style="margin-top:16px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;max-height:260px;overflow-y:auto;">
+                <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;"><i class="fas fa-shield-halved" style="margin-right:5px"></i>Chain of Custody Preview</p>
+            </div>
         </div>
         <div style="padding:12px 24px 20px;display:flex;gap:10px;justify-content:flex-end;">
             <button type="button" class="btn btn-outline" onclick="closeConfirm()">Go Back</button>
@@ -671,7 +1085,7 @@ let fileIdCounter  = 0;
 
 // ── step indicator ──
 function setStep(n){
-    for(let i=1;i<=4;i++){
+    for(let i=1;i<=5;i++){
         const el=document.getElementById('ps'+i);
         const ll=document.getElementById('pl'+i);
         const lb=document.getElementById('psl'+i);
@@ -691,11 +1105,13 @@ function caseSelected(sel){
         document.getElementById('selCaseNum').textContent   = sel.options[sel.selectedIndex].dataset.number;
         document.getElementById('selCaseTitle').textContent = sel.options[sel.selectedIndex].dataset.title;
         info.style.display = 'block';
+        enableSection('sec-assignment');
         enableSection('sec-collection');
         enableSection('sec-files');
         setStep(2);
     } else {
         info.style.display = 'none';
+        disableSection('sec-assignment');
         disableSection('sec-collection');
         disableSection('sec-files');
         setStep(1);
@@ -732,7 +1148,7 @@ async function createCase(e){
             document.getElementById('selCaseNum').textContent=d.case_number;
             document.getElementById('selCaseTitle').textContent=d.case_title;
             document.getElementById('selectedCaseInfo').style.display='block';
-            enableSection('sec-collection');enableSection('sec-files');setStep(2);
+            enableSection('sec-assignment');enableSection('sec-collection');enableSection('sec-files');setStep(2);
             closeCaseModal();
             document.getElementById('newCaseTitle').value='';
             document.getElementById('newCaseDesc').value='';
@@ -820,6 +1236,20 @@ function updateQueueInfo(){
 }
 
 // ── confirm + upload ──
+function getGPS(){
+    const btn=document.getElementById('gpsBtn');
+    if(!navigator.geolocation){alert('Geolocation not supported by your browser.');return;}
+    btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Getting location...';
+    navigator.geolocation.getCurrentPosition(pos=>{
+        document.getElementById('gpsLat').value=pos.coords.latitude.toFixed(6);
+        document.getElementById('gpsLon').value=pos.coords.longitude.toFixed(6);
+        btn.disabled=false;btn.innerHTML='<i class="fas fa-location-arrow"></i> Get Current GPS';
+    },err=>{
+        alert('Unable to get location: '+err.message);
+        btn.disabled=false;btn.innerHTML='<i class="fas fa-location-arrow"></i> Get Current GPS';
+    },{enableHighAccuracy:true,timeout:10000});
+}
+
 function uploadAll(){
     if(!selectedCaseId){alert('Please select a case first.');return;}
     if(fileQueue.length===0){alert('Please add at least one file.');return;}
@@ -832,6 +1262,68 @@ function uploadAll(){
         li.innerHTML=`<i class="fas fa-file-shield"></i><span><strong>${esc(title)}</strong> &nbsp;·&nbsp; ${esc(type)} &nbsp;·&nbsp; ${fmtSize(file.size)}</span>`;
         list.appendChild(li);
     });
+
+    // COC preview in confirm modal
+    const cocPreview=document.getElementById('cocPreview');
+    if(cocPreview){
+        const rows=[];
+        const v=id=>{const el=document.getElementById(id);return el?.value?.trim()||'';};
+        const addRow=(label,val)=>{if(val)rows.push(`<div class="coc-row"><span class="coc-label">${esc(label)}</span><span class="coc-val">${esc(val)}</span></div>`);};
+        addRow('Collected by',v('collectedByName'));
+        addRow('Badge/ID',v('collectorBadge'));
+        addRow('Unit',v('collectorUnit'));
+        addRow('Collection date',v('collDate')+' '+v('collTime'));
+        addRow('Location',v('collLocation'));
+        addRow('Address',v('collAddress'));
+        addRow('Condition',v('conditionOnReceipt'));
+        addRow('Packaging',v('packagingType'));
+        addRow('Seal number',v('sealNumber'));
+        addRow('Evidence tag',v('evidenceTagNumber'));
+        addRow('Acquisition',v('acquisitionMethod'));
+        addRow('Tools',v('toolsUsed'));
+        addRow('Write blocker',document.getElementById('writeBlockerUsed')?.checked?'Yes':'No');
+        addRow('Device',v('originalDevice'));
+        addRow('Device model',v('deviceMakeModel'));
+        addRow('Serial/IMEI',v('deviceSerial'));
+        addRow('OS detected',v('osDetected'));
+        addRow('Legal basis',v('legalBasis'));
+        addRow('Warrant/Order',v('warrantNumber'));
+        addRow('Issuing court',v('issuingCourt'));
+        addRow('OB Number',v('obNumber'));
+        const gpsLat=v('gpsLat'),gpsLon=v('gpsLon');
+        if(gpsLat&&gpsLon) addRow('GPS',`${gpsLat}, ${gpsLon}`);
+        addRow('Temperature',v('sceneTemp')?v('sceneTemp')+'°C':'');
+        addRow('Environment',v('sceneWeather'));
+        addRow('Relinquished by',v('relinquishedBy')+(v('relinquishedByRole')?' ('+v('relinquishedByRole')+')':''));
+        addRow('Relinquished at',v('relinquishedDateTime'));
+        addRow('Relinquished location',v('relinquishedLocation'));
+        addRow('Received by',v('receivedBy'));
+        addRow('Received at',v('receivedDateTime'));
+        addRow('Transport',v('transportMethod'));
+        addRow('Storage',v('storageLocation'));
+        addRow('Storage conditions',v('storageConditions'));
+        addRow('Photo ref',v('photoRef'));
+        addRow('Video ref',v('videoRef'));
+        addRow('Sketch ref',v('sketchRef'));
+        addRow('IP address',v('ipAddress'));
+        addRow('MAC address',v('macAddress'));
+        addRow('Network SSID',v('networkSSID'));
+        addRow('Hostname',v('hostname'));
+        const precautions=[];
+        if(document.getElementById('handleFragile')?.checked) precautions.push('Fragile');
+        if(document.getElementById('handleEMF')?.checked) precautions.push('EMF/RF shielded');
+        if(document.getElementById('handleTemp')?.checked) precautions.push('Temperature sensitive');
+        if(document.getElementById('handleBio')?.checked) precautions.push('Biohazard');
+        if(document.getElementById('handleRemote')?.checked) precautions.push('Remote wipe risk');
+        if(document.getElementById('handleEncrypted')?.checked) precautions.push('Encrypted');
+        if(precautions.length) addRow('Precautions',precautions.join(', '));
+        addRow('Witness',v('witnessName')+(v('witnessBadge')?' ('+v('witnessBadge')+')':''));
+        addRow('Witness 2',v('witness2Name')+(v('witness2Badge')?' ('+v('witness2Badge')+')':''));
+        addRow('Collection notes',v('collectionNotes'));
+        addRow('COC notes',v('cocNotes'));
+        cocPreview.innerHTML=rows.length?rows.join(''):'<p style="font-size:12px;color:var(--dim);font-style:italic;">No COC details filled in.</p>';
+    }
+
     document.getElementById('confirmModal').style.display='flex';
 }
 function closeConfirm(){document.getElementById('confirmModal').style.display='none';}
@@ -879,8 +1371,45 @@ async function uploadSingle({id,file}){
     fd.append('os_detected',document.getElementById('osDetected')?.value||'');
     fd.append('witness_name',document.getElementById('witnessName')?.value||'');
     fd.append('witness_badge',document.getElementById('witnessBadge')?.value||'');
+    fd.append('witness2_name',document.getElementById('witness2Name')?.value||'');
+    fd.append('witness2_badge',document.getElementById('witness2Badge')?.value||'');
+    fd.append('legal_basis',document.getElementById('legalBasis')?.value||'');
+    fd.append('warrant_number',document.getElementById('warrantNumber')?.value||'');
+    fd.append('issuing_court',document.getElementById('issuingCourt')?.value||'');
+    fd.append('ob_number',document.getElementById('obNumber')?.value||'');
+    fd.append('gps_lat',document.getElementById('gpsLat')?.value||'');
+    fd.append('gps_lon',document.getElementById('gpsLon')?.value||'');
+    fd.append('scene_temp',document.getElementById('sceneTemp')?.value||'');
+    fd.append('scene_weather',document.getElementById('sceneWeather')?.value||'');
+    fd.append('relinquished_by',document.getElementById('relinquishedBy')?.value||'');
+    fd.append('relinquished_by_role',document.getElementById('relinquishedByRole')?.value||'');
+    fd.append('relinquished_datetime',document.getElementById('relinquishedDateTime')?.value||'');
+    fd.append('relinquished_location',document.getElementById('relinquishedLocation')?.value||'');
+    fd.append('received_by',document.getElementById('receivedBy')?.value||'');
+    fd.append('received_datetime',document.getElementById('receivedDateTime')?.value||'');
+    fd.append('transport_method',document.getElementById('transportMethod')?.value||'');
+    fd.append('transport_datetime',document.getElementById('transportDateTime')?.value||'');
+    fd.append('storage_location',document.getElementById('storageLocation')?.value||'');
+    fd.append('storage_conditions',document.getElementById('storageConditions')?.value||'');
+    fd.append('photo_ref',document.getElementById('photoRef')?.value||'');
+    fd.append('video_ref',document.getElementById('videoRef')?.value||'');
+    fd.append('sketch_ref',document.getElementById('sketchRef')?.value||'');
+    fd.append('other_media_ref',document.getElementById('otherMediaRef')?.value||'');
+    fd.append('ip_address',document.getElementById('ipAddress')?.value||'');
+    fd.append('mac_address',document.getElementById('macAddress')?.value||'');
+    fd.append('network_ssid',document.getElementById('networkSSID')?.value||'');
+    fd.append('hostname',document.getElementById('hostname')?.value||'');
+    if(document.getElementById('handleFragile')?.checked) fd.append('handle_fragile','1');
+    if(document.getElementById('handleEMF')?.checked) fd.append('handle_emf','1');
+    if(document.getElementById('handleTemp')?.checked) fd.append('handle_temp','1');
+    if(document.getElementById('handleBio')?.checked) fd.append('handle_bio','1');
+    if(document.getElementById('handleRemote')?.checked) fd.append('handle_remote','1');
+    if(document.getElementById('handleEncrypted')?.checked) fd.append('handle_encrypted','1');
     fd.append('collection_notes',document.getElementById('collectionNotes')?.value||'');
     fd.append('chain_of_custody_notes',document.getElementById('cocNotes')?.value||'');
+    // Assignment
+    fd.append('assigned_analyst',document.getElementById('assignAnalyst')?.value||'');
+    fd.append('assignment_notes',document.getElementById('assignmentNotes')?.value||'');
     fd.append('ev_file',file);
     try{
         const res=await fetch('evidence_upload.php',{method:'POST',body:fd});
@@ -928,21 +1457,64 @@ function showSummary(){
                 <p style="font-size:12px;color:var(--muted)">Failed</p></div>`:''}
         </div>`;
     // COC summary
+    const v=id=>{const el=document.getElementById(id);return el?.value?.trim()||'—';};
+    const cocRows=[];
+    cocRows.push(['Collected by',v('collectedByName')]);
+    cocRows.push(['Badge / ID',v('collectorBadge')]);
+    cocRows.push(['Unit',v('collectorUnit')]);
+    cocRows.push(['Collection date/time',v('collDate')+' '+v('collTime')]);
+    cocRows.push(['Location',v('collLocation')]);
+    const addr=v('collAddress');if(addr!=='—')cocRows.push(['Address',addr]);
+    cocRows.push(['Condition on receipt',v('conditionOnReceipt')]);
+    cocRows.push(['Packaging',v('packagingType')]);
+    const seal=v('sealNumber');if(seal!=='—')cocRows.push(['Seal number',seal]);
+    const tag=v('evidenceTagNumber');if(tag!=='—')cocRows.push(['Evidence tag',tag]);
+    cocRows.push(['Acquisition method',v('acquisitionMethod')]);
+    cocRows.push(['Tools used',v('toolsUsed')]);
+    cocRows.push(['Write blocker',document.getElementById('writeBlockerUsed')?.checked?'Yes':'No']);
+    const dev=v('originalDevice');if(dev!=='—')cocRows.push(['Device',dev]);
+    const model=v('deviceMakeModel');if(model!=='—')cocRows.push(['Device model',model]);
+    const serial=v('deviceSerial');if(serial!=='—')cocRows.push(['Serial/IMEI',serial]);
+    const os=v('osDetected');if(os!=='—')cocRows.push(['OS detected',os]);
+    const legal=v('legalBasis');if(legal!=='—')cocRows.push(['Legal basis',legal]);
+    const warrant=v('warrantNumber');if(warrant!=='—')cocRows.push(['Warrant/Order',warrant]);
+    const court=v('issuingCourt');if(court!=='—')cocRows.push(['Issuing court',court]);
+    const ob=v('obNumber');if(ob!=='—')cocRows.push(['OB/Case number',ob]);
+    const gpsLat=v('gpsLat'),gpsLon=v('gpsLon');
+    if(gpsLat!=='—'&&gpsLon!=='—')cocRows.push(['GPS',`${gpsLat}, ${gpsLon}`]);
+    const temp=v('sceneTemp');if(temp!=='—')cocRows.push(['Temperature',temp+'°C']);
+    const weather=v('sceneWeather');if(weather!=='—')cocRows.push(['Environment',weather]);
+    const relBy=v('relinquishedBy');if(relBy!=='—'){const relRole=v('relinquishedByRole');cocRows.push(['Relinquished by',relBy+(relRole!=='—'?' ('+relRole+')':'')]);}
+    const relDt=v('relinquishedDateTime');if(relDt!=='—')cocRows.push(['Relinquished at',relDt]);
+    const relLoc=v('relinquishedLocation');if(relLoc!=='—')cocRows.push(['Relinquished location',relLoc]);
+    cocRows.push(['Received by',v('receivedBy')]);
+    const recDt=v('receivedDateTime');if(recDt!=='—')cocRows.push(['Received at',recDt]);
+    const trans=v('transportMethod');if(trans!=='—')cocRows.push(['Transport',trans]);
+    const store=v('storageLocation');if(store!=='—')cocRows.push(['Storage',store]);
+    const storeCond=v('storageConditions');if(storeCond!=='—')cocRows.push(['Storage conditions',storeCond]);
+    const photo=v('photoRef');if(photo!=='—')cocRows.push(['Photo ref',photo]);
+    const vid=v('videoRef');if(vid!=='—')cocRows.push(['Video ref',vid]);
+    const sketch=v('sketchRef');if(sketch!=='—')cocRows.push(['Sketch ref',sketch]);
+    const ip=v('ipAddress');if(ip!=='—')cocRows.push(['IP address',ip]);
+    const mac=v('macAddress');if(mac!=='—')cocRows.push(['MAC address',mac]);
+    const ssid=v('networkSSID');if(ssid!=='—')cocRows.push(['Network SSID',ssid]);
+    const host=v('hostname');if(host!=='—')cocRows.push(['Hostname',host]);
+    const precautions=[];
+    if(document.getElementById('handleFragile')?.checked) precautions.push('Fragile');
+    if(document.getElementById('handleEMF')?.checked) precautions.push('EMF/RF shielded');
+    if(document.getElementById('handleTemp')?.checked) precautions.push('Temperature sensitive');
+    if(document.getElementById('handleBio')?.checked) precautions.push('Biohazard');
+    if(document.getElementById('handleRemote')?.checked) precautions.push('Remote wipe risk');
+    if(document.getElementById('handleEncrypted')?.checked) precautions.push('Encrypted');
+    if(precautions.length) cocRows.push(['Precautions',precautions.join(', ')]);
+    const w1=v('witnessName');if(w1!=='—')cocRows.push(['Witness',w1+(v('witnessBadge')!=='—'?' ('+v('witnessBadge')+')':'')]);
+    const w2=v('witness2Name');if(w2!=='—')cocRows.push(['Witness 2',w2+(v('witness2Badge')!=='—'?' ('+v('witness2Badge')+')':'')]);
+
     html+=`<div style="background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.15);border-radius:var(--radius);padding:14px 16px;margin-bottom:18px;">
         <p style="font-size:11.5px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;"><i class="fas fa-shield-halved" style="margin-right:5px"></i>Chain of Custody Record</p>
-        <table class="summary-table">
-            <tr><td>Collected by</td><td>${esc(document.getElementById('collectedByName')?.value||'—')}</td></tr>
-            <tr><td>Badge / ID</td><td>${esc(document.getElementById('collectorBadge')?.value||'—')}</td></tr>
-            <tr><td>Unit</td><td>${esc(document.getElementById('collectorUnit')?.value||'—')}</td></tr>
-            <tr><td>Collection date/time</td><td>${esc(document.getElementById('collDate')?.value||'')} ${esc(document.getElementById('collTime')?.value||'')}</td></tr>
-            <tr><td>Location</td><td>${esc(document.getElementById('collLocation')?.value||'—')}</td></tr>
-            <tr><td>Condition on receipt</td><td>${esc(document.getElementById('conditionOnReceipt')?.value||'—')}</td></tr>
-            <tr><td>Acquisition method</td><td>${esc(document.getElementById('acquisitionMethod')?.value||'—')}</td></tr>
-            <tr><td>Tools used</td><td>${esc(document.getElementById('toolsUsed')?.value||'—')}</td></tr>
-            <tr><td>Write blocker</td><td>${document.getElementById('writeBlockerUsed')?.checked?'Yes':'No'}</td></tr>
-            <tr><td>Witness</td><td>${esc(document.getElementById('witnessName')?.value||'—')}</td></tr>
-        </table>
-    </div>`;
+        <table class="summary-table">`;
+    cocRows.forEach(([label,val])=>{html+=`<tr><td>${esc(label)}</td><td>${esc(val)}</td></tr>`;});
+    html+=`</table></div>`;
     html+=`<table class="dc-table"><thead><tr><th>Evidence Number</th><th>Title</th><th>SHA-256</th><th>MD5</th><th>Size</th><th>Status</th></tr></thead><tbody>`;
     uploadResults.forEach(r=>{
         html+=r.success

@@ -3,9 +3,10 @@
  * DigiCustody – Admin Access Requests
  * Save to: /var/www/html/digicustody/pages/requests.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 require_role('admin');
 
@@ -97,7 +98,7 @@ $role_colors = ['investigator'=>'blue','analyst'=>'green','viewer'=>'gray'];
 <title>Access Requests — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .req-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:14px;transition:border-color .2s;}
@@ -142,7 +143,8 @@ $role_colors = ['investigator'=>'blue','analyst'=>'green','viewer'=>'gray'];
 <!-- Header -->
 <div class="page-header">
     <div>
-        <h1>Access Requests</h1>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <h1 style="margin-top:8px;">Access Requests</h1>
         <p>Review and approve or reject account access requests</p>
     </div>
 </div>
@@ -287,5 +289,6 @@ function handleSearch(e){if(e.key==='Enter'){window.location='users.php?search='
 var st;var si=document.getElementById('searchInput');
 if(si) si.addEventListener('input',function(){clearTimeout(st);st=setTimeout(function(){si.closest('form').submit();},500);});
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

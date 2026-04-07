@@ -3,46 +3,97 @@
  * DigiCustody – Global Search
  * Save to: /var/www/html/digicustody/pages/search.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
+// Viewers cannot use search — redirect to dashboard
+if (is_viewer()) {
+    header('Location: ' . BASE_URL . 'dashboard.php?error=access_denied');
+    exit;
+}
+
 $page_title = 'Search';
+$uid  = $_SESSION['user_id'];
+$role = $_SESSION['role'];
 $q = trim($_GET['q'] ?? '');
 $s = "%$q%";
 
 $evidence = $cases = $reports = [];
 
 if ($q !== '') {
-    $evidence = $pdo->prepare("
-        SELECT e.id, e.evidence_number, e.title, e.evidence_type, e.status, e.uploaded_at,
-               c.case_number, u.full_name AS uploader
-        FROM evidence e JOIN cases c ON c.id=e.case_id JOIN users u ON u.id=e.uploaded_by
-        WHERE e.evidence_number LIKE ? OR e.title LIKE ? OR e.description LIKE ?
-        ORDER BY e.uploaded_at DESC LIMIT 15
-    ");
-    $evidence->execute([$s,$s,$s]);
+    // Analyst-scoped evidence search
+    $ev_where = "e.evidence_number LIKE ? OR e.title LIKE ? OR e.description LIKE ?";
+    if (is_analyst()) {
+        $ev_where .= " AND (e.uploaded_by=? OR e.current_custodian=? OR e.case_id IN (SELECT c.id FROM cases c WHERE c.assigned_to=? OR c.created_by=?))";
+        $evidence = $pdo->prepare("
+            SELECT e.id, e.evidence_number, e.title, e.evidence_type, e.status, e.uploaded_at,
+                   c.case_number, u.full_name AS uploader
+            FROM evidence e JOIN cases c ON c.id=e.case_id JOIN users u ON u.id=e.uploaded_by
+            WHERE $ev_where
+            ORDER BY e.uploaded_at DESC LIMIT 15
+        ");
+        $evidence->execute([$s,$s,$s, $uid,$uid, $uid,$uid]);
+    } else {
+        $evidence = $pdo->prepare("
+            SELECT e.id, e.evidence_number, e.title, e.evidence_type, e.status, e.uploaded_at,
+                   c.case_number, u.full_name AS uploader
+            FROM evidence e JOIN cases c ON c.id=e.case_id JOIN users u ON u.id=e.uploaded_by
+            WHERE $ev_where
+            ORDER BY e.uploaded_at DESC LIMIT 15
+        ");
+        $evidence->execute([$s,$s,$s]);
+    }
     $evidence = $evidence->fetchAll(PDO::FETCH_ASSOC);
 
-    $cases = $pdo->prepare("
-        SELECT id, case_number, case_title, case_type, status, priority, created_at,
-               (SELECT COUNT(*) FROM evidence WHERE case_id=cases.id) AS ev_count
-        FROM cases
-        WHERE case_number LIKE ? OR case_title LIKE ? OR description LIKE ?
-        ORDER BY created_at DESC LIMIT 10
-    ");
-    $cases->execute([$s,$s,$s]);
+    // Analyst-scoped case search
+    $case_where = "case_number LIKE ? OR case_title LIKE ? OR description LIKE ?";
+    if (is_analyst()) {
+        $case_where .= " AND (assigned_to=? OR created_by=? OR id IN (SELECT DISTINCT e.case_id FROM evidence e WHERE e.uploaded_by=? OR e.current_custodian=?))";
+        $cases = $pdo->prepare("
+            SELECT id, case_number, case_title, case_type, status, priority, created_at,
+                   (SELECT COUNT(*) FROM evidence WHERE case_id=cases.id) AS ev_count
+            FROM cases
+            WHERE $case_where
+            ORDER BY created_at DESC LIMIT 10
+        ");
+        $cases->execute([$s,$s,$s, $uid,$uid, $uid,$uid]);
+    } else {
+        $cases = $pdo->prepare("
+            SELECT id, case_number, case_title, case_type, status, priority, created_at,
+                   (SELECT COUNT(*) FROM evidence WHERE case_id=cases.id) AS ev_count
+            FROM cases
+            WHERE $case_where
+            ORDER BY created_at DESC LIMIT 10
+        ");
+        $cases->execute([$s,$s,$s]);
+    }
     $cases = $cases->fetchAll(PDO::FETCH_ASSOC);
 
-    $reports = $pdo->prepare("
-        SELECT ar.id, ar.report_number, ar.title, ar.status, ar.created_at,
-               e.evidence_number, u.full_name AS analyst
-        FROM analysis_reports ar JOIN evidence e ON e.id=ar.evidence_id JOIN users u ON u.id=ar.submitted_by
-        WHERE ar.report_number LIKE ? OR ar.title LIKE ? OR ar.summary LIKE ?
-        ORDER BY ar.created_at DESC LIMIT 10
-    ");
-    $reports->execute([$s,$s,$s]);
+    // Reports — analysts only see their own
+    $report_where = "ar.report_number LIKE ? OR ar.title LIKE ? OR ar.summary LIKE ?";
+    if (is_analyst()) {
+        $report_where .= " AND ar.submitted_by=?";
+        $reports = $pdo->prepare("
+            SELECT ar.id, ar.report_number, ar.title, ar.status, ar.created_at,
+                   e.evidence_number, u.full_name AS analyst
+            FROM analysis_reports ar JOIN evidence e ON e.id=ar.evidence_id JOIN users u ON u.id=ar.submitted_by
+            WHERE $report_where
+            ORDER BY ar.created_at DESC LIMIT 10
+        ");
+        $reports->execute([$s,$s,$s, $uid]);
+    } else {
+        $reports = $pdo->prepare("
+            SELECT ar.id, ar.report_number, ar.title, ar.status, ar.created_at,
+                   e.evidence_number, u.full_name AS analyst
+            FROM analysis_reports ar JOIN evidence e ON e.id=ar.evidence_id JOIN users u ON u.id=ar.submitted_by
+            WHERE $report_where
+            ORDER BY ar.created_at DESC LIMIT 10
+        ");
+        $reports->execute([$s,$s,$s]);
+    }
     $reports = $reports->fetchAll(PDO::FETCH_ASSOC);
 }
 
@@ -63,7 +114,7 @@ function highlight($text, $q) {
 <title>Search — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .search-big{display:flex;gap:10px;margin-bottom:24px;}

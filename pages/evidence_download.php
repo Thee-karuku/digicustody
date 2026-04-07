@@ -3,9 +3,10 @@
  * DigiCustody – Evidence Download Page
  * Save to: /var/www/html/digicustody/pages/evidence_download.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
 if (is_viewer()) {
@@ -16,9 +17,30 @@ $page_title = 'Download Evidence';
 $uid  = $_SESSION['user_id'];
 $role = $_SESSION['role'];
 
+// Analysts can only download evidence assigned to them (via case_access)
+if (!is_admin() && isset($_GET['id'])) {
+    $ev_id = (int)$_GET['id'];
+    $check = $pdo->prepare("
+        SELECT e.id FROM evidence e
+        WHERE e.id=? AND (e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
+            OR e.uploaded_by=? OR e.current_custodian=?)
+    ");
+    $check->execute([$ev_id, $uid, $uid, $uid]);
+    if (!$check->fetch()) {
+        header('Location: ../dashboard.php?error=access_denied');
+        exit;
+    }
+}
+
 // ── Handle actual file download via token ─────────────────
 if (isset($_GET['token'])) {
     $token = trim($_GET['token']);
+    
+    // Rate limit download attempts
+    if (!rate_limit_check($pdo, 'download', $_SERVER['REMOTE_ADDR'] ?? 'unknown', 20, 60)) {
+        die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ Too Many Requests</h2><p style="color:#6b82a0;margin-top:10px">Please wait before downloading more files.</p></div>');
+    }
+    
     $td    = validate_download_token($pdo, $token);
 
     if (!$td) {
@@ -39,6 +61,9 @@ if (isset($_GET['token'])) {
         'evidence_downloaded', 'evidence', $td['evidence_id'], '',
         "Evidence downloaded via token. File: {$td['file_name']}",
         $_SERVER['REMOTE_ADDR'] ?? '');
+
+    // Log to download_history
+    log_download($pdo, $td['evidence_id'], $uid, $td['id'], $td['download_reason'] ?? '');
 
     // Serve file
     $finfo    = new finfo(FILEINFO_MIME_TYPE);
@@ -121,7 +146,7 @@ $csrf = csrf_token();
 <title>Download Evidence — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .field{margin-bottom:18px;}
@@ -152,9 +177,12 @@ $csrf = csrf_token();
         <h1>Download Evidence</h1>
         <p>Generate a secure time-limited download link</p>
     </div>
-    <a href="evidence_view.php?id=<?= $id ?>" class="btn btn-outline">
-        <i class="fas fa-arrow-left"></i> Back to Evidence
-    </a>
+    <div style="display:flex;gap:10px;align-items:center;">
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <a href="evidence_view.php?id=<?= $id ?>" class="btn btn-outline">
+            <i class="fas fa-arrow-left"></i> Back to Evidence
+        </a>
+    </div>
 </div>
 
 <?php if ($error): ?>
@@ -188,7 +216,7 @@ $csrf = csrf_token();
         <button class="btn btn-gold" onclick="copyToken()">
             <i class="fas fa-copy" id="copyIcon"></i> Copy Link
         </button>
-        <a href="<?= e($token_data['url']) ?>" class="btn btn-outline" download>
+        <a href="<?= e($token_data['url']) ?>" class="btn btn-download" download>
             <i class="fas fa-download"></i> Download Now
         </a>
     </div>
@@ -286,5 +314,6 @@ function copyToken(){
     if(url){navigator.clipboard.writeText(url).then(()=>{const ic=document.getElementById('copyIcon');ic.className='fas fa-check';setTimeout(()=>ic.className='fas fa-copy',1500);});}
 }
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

@@ -3,9 +3,10 @@
  * DigiCustody – Notifications Page
  * Save to: /var/www/html/digicustody/pages/notifications.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
 $page_title = 'Notifications';
@@ -43,7 +44,7 @@ $type_icons = ['info'=>'fa-circle-info','success'=>'fa-circle-check','warning'=>
 <title>Notifications — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .notif-card{display:flex;align-items:flex-start;gap:14px;padding:16px 20px;border-bottom:1px solid var(--border);transition:background .15s;}
@@ -70,7 +71,8 @@ $type_icons = ['info'=>'fa-circle-info','success'=>'fa-circle-check','warning'=>
 
 <div class="page-header">
     <div>
-        <h1>Notifications</h1>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <h1 style="margin-top:8px;">Notifications</h1>
         <p><?= $unread_count ?> unread notification<?= $unread_count!=1?'s':'' ?></p>
     </div>
     <?php if ($unread_count > 0): ?>
@@ -130,5 +132,6 @@ function toggleUserMenu(){document.getElementById('userDropdown').classList.togg
 document.addEventListener('click',function(e){if(!e.target.closest('#notifWrap'))document.getElementById('notifDropdown').classList.remove('open');if(!e.target.closest('#userMenuWrap'))document.getElementById('userDropdown').classList.remove('open');});
 function handleSearch(e){if(e.key==='Enter'){window.location='search.php?q='+encodeURIComponent(document.getElementById('globalSearch').value);}}
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

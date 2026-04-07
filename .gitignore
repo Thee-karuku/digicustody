@@ -1,0 +1,21 @@
+# Sessions
+/sessions/*
+!/sessions/.gitkeep
+
+# Uploads
+/uploads/*
+!/uploads/.gitkeep
+
+# Config (contains credentials)
+config/db.php
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log

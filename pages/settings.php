@@ -3,9 +3,10 @@
  * DigiCustody – Settings Page
  * Save to: /var/www/html/digicustody/pages/settings.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 require_role('admin');
 
@@ -63,7 +64,7 @@ $csrf = csrf_token();
 <title>Settings — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .field{margin-bottom:18px;}
@@ -97,7 +98,8 @@ $csrf = csrf_token();
 
 <div class="page-header">
     <div>
-        <h1>Settings</h1>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <h1 style="margin-top:8px;">Settings</h1>
         <p>System configuration and administration</p>
     </div>
 </div>
@@ -233,5 +235,6 @@ function clearTokens(){
     fetch('settings.php?action=clear_tokens').then(()=>location.reload());
 }
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

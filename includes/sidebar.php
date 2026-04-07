@@ -11,8 +11,9 @@ $base         = $in_pages ? '../' : '';
 $nav_items = [
     'dashboard' => ['icon'=>'fa-gauge-high',  'label'=>'Dashboard',        'roles'=>['admin','investigator','analyst','viewer'], 'href'=>$base.'dashboard.php'],
     'evidence'  => ['icon'=>'fa-database',     'label'=>'Evidence',         'roles'=>['admin','investigator','analyst','viewer'], 'href'=>$base.'pages/evidence.php'],
-    'cases'     => ['icon'=>'fa-folder-open',  'label'=>'Cases',            'roles'=>['admin','investigator','analyst','viewer'], 'href'=>$base.'pages/cases.php'],
+    'cases'     => ['icon'=>'fa-folder-open',  'label'=>'Cases',            'roles'=>['admin','investigator','analyst'],          'href'=>$base.'pages/cases.php'],
     'reports'   => ['icon'=>'fa-file-lines',   'label'=>'Analysis Reports', 'roles'=>['admin','investigator','analyst'],          'href'=>$base.'pages/reports.php'],
+    'downloads' => ['icon'=>'fa-download',     'label'=>'Downloads',        'roles'=>['admin','investigator','analyst'],          'href'=>$base.'pages/downloads.php'],
     'audit'     => ['icon'=>'fa-scroll',       'label'=>'Audit Logs',       'roles'=>['admin'],                                  'href'=>$base.'pages/audit.php'],
     'users'     => ['icon'=>'fa-users',        'label'=>'Users',            'roles'=>['admin'],                                  'href'=>$base.'pages/users.php'],
     'requests'  => ['icon'=>'fa-user-clock',   'label'=>'Access Requests',  'roles'=>['admin'],                                  'href'=>$base.'pages/requests.php'],

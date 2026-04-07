@@ -3,9 +3,10 @@
  * DigiCustody – Evidence Detail / View Page
  * Save to: /var/www/html/digicustody/pages/evidence_view.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
 $page_title = 'Evidence Details';
@@ -14,6 +15,12 @@ $role = $_SESSION['role'];
 $id   = (int)($_GET['id'] ?? 0);
 
 if (!$id) { header('Location: evidence.php'); exit; }
+
+// Verify evidence access
+$access = validate_evidence_access($pdo, $id, $uid, $role);
+if (!$access['allowed']) {
+    header('Location: evidence.php?error=access_denied'); exit;
+}
 
 // Fetch evidence with full details
 $stmt = $pdo->prepare("
@@ -35,19 +42,31 @@ if (!$ev) { header('Location: evidence.php?error=not_found'); exit; }
 audit_log($pdo,$uid,$_SESSION['username'],$role,'evidence_viewed','evidence',$id,$ev['evidence_number'],
     "Evidence viewed: {$ev['evidence_number']} — {$ev['title']}", $_SERVER['REMOTE_ADDR']??'');
 
-// Full transfer/custody history
+// Full custody history from evidence_transfers table
 $transfers = $pdo->prepare("
     SELECT et.*,
            u_from.full_name AS from_name, u_from.role AS from_role,
-           u_to.full_name   AS to_name,   u_to.role   AS to_role
+           u_to.full_name   AS to_name,   u_to.role   AS to_role,
+           u_acc.full_name  AS accepted_by_name
     FROM evidence_transfers et
     JOIN users u_from ON u_from.id = et.from_user
     JOIN users u_to   ON u_to.id   = et.to_user
+    LEFT JOIN users u_acc ON u_acc.id = et.accepted_by
     WHERE et.evidence_id = ?
     ORDER BY et.transferred_at ASC
 ");
 $transfers->execute([$id]);
 $transfers = $transfers->fetchAll();
+
+// Check for pending transfers this user can act on
+$pending_for_me = $pdo->prepare("
+    SELECT et.id, et.from_user, u.full_name AS from_name
+    FROM evidence_transfers et
+    JOIN users u ON u.id = et.from_user
+    WHERE et.evidence_id = ? AND et.to_user = ? AND et.status = 'pending'
+");
+$pending_for_me->execute([$id, $uid]);
+$pending_for_me = $pending_for_me->fetchAll();
 
 // Hash verifications
 $verifications = $pdo->prepare("
@@ -132,7 +151,7 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
 <title><?= e($ev['evidence_number']) ?> — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;}
@@ -188,9 +207,9 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
         <p><?= e($ev['title']) ?> &nbsp;·&nbsp; <?= e($ev['case_number']) ?></p>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <a href="evidence.php" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back</a>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
         <?php if(!is_viewer()): ?>
-        <a href="evidence_download.php?id=<?= $id ?>" class="btn btn-outline"><i class="fas fa-download"></i> Download</a>
+        <a href="evidence_download.php?id=<?= $id ?>" class="btn btn-download"><i class="fas fa-download"></i> Download</a>
         <?php endif; ?>
         <?php if(can_write()): ?>
         <a href="evidence_transfer.php?id=<?= $id ?>" class="btn btn-outline"><i class="fas fa-right-left"></i> Transfer</a>
@@ -199,7 +218,7 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
         <a href="evidence_verify.php?id=<?= $id ?>" class="btn btn-outline">
             <i class="fas fa-fingerprint"></i> Verify Integrity
         </a>
-        <a href="coc_report.php?id=<?= $id ?>" class="btn btn-outline">
+        <a href="coc_report.php?id=<?= $id ?>" class="btn btn-coc">
             <i class="fas fa-file-lines"></i> COC Report
         </a>
         <?php endif; ?>
@@ -331,27 +350,51 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
                 </div>
             </div>
 
-            <!-- Transfers -->
+            <!-- Custody history from evidence_transfers -->
             <?php foreach($transfers as $t): ?>
             <div class="coc-item">
-                <div class="coc-dot <?= $t['status'] ?>"><i class="fas <?= $t['status']==='accepted'?'fa-circle-check':($t['status']==='rejected'?'fa-circle-xmark':'fa-right-left') ?>"></i></div>
+                <?php if($t['status'] === 'accepted'): ?>
+                <div class="coc-dot accepted"><i class="fas fa-circle-check"></i></div>
+                <?php elseif($t['status'] === 'rejected'): ?>
+                <div class="coc-dot rejected"><i class="fas fa-circle-xmark"></i></div>
+                <?php else: ?>
+                <div class="coc-dot transfer"><i class="fas fa-clock"></i></div>
+                <?php endif; ?>
                 <div class="coc-body">
                     <p class="coc-title">
-                        Custody Transfer — <span class="badge badge-<?= $t['status']==='accepted'?'green':($t['status']==='rejected'?'red':'orange') ?>"><?= ucfirst($t['status']) ?></span>
+                        <?= $t['status'] === 'accepted' ? 'Custody Transferred' : ($t['status'] === 'rejected' ? 'Transfer Rejected' : 'Transfer Pending') ?>
+                        &nbsp;<?= status_badge($t['status']) ?>
                     </p>
                     <p class="coc-meta">
                         From: <strong style="color:var(--text)"><?= e($t['from_name']) ?></strong> <?= role_badge($t['from_role']) ?>
-                        &nbsp;<i class="fas fa-arrow-right" style="font-size:10px"></i>&nbsp;
+                        &nbsp;→&nbsp;
                         To: <strong style="color:var(--text)"><?= e($t['to_name']) ?></strong> <?= role_badge($t['to_role']) ?>
                     </p>
-                    <p class="coc-meta" style="margin-top:3px">Initiated: <?= date('M j, Y H:i',strtotime($t['transferred_at'])) ?>
-                        <?= $t['accepted_at']?' &nbsp;·&nbsp; Responded: '.date('M j, Y H:i',strtotime($t['accepted_at'])):'' ?></p>
+                    <p class="coc-meta" style="margin-top:3px"><?= date('M j, Y H:i',strtotime($t['transferred_at'])) ?></p>
                     <?php if($t['transfer_reason']): ?>
-                    <p class="coc-reason">"<?= e($t['transfer_reason']) ?>"</p>
+                    <p class="coc-reason"><i class="fas fa-quote-left" style="margin-right:4px;opacity:.5"></i><?= e($t['transfer_reason']) ?></p>
                     <?php endif; ?>
-                    <?php if($t['hash_at_transfer']): ?>
+                    <?php if($t['status'] === 'accepted' && $t['accepted_at']): ?>
+                    <p class="coc-meta" style="margin-top:4px;color:var(--success);">
+                        <i class="fas fa-check"></i> Accepted: <?= date('M j, Y H:i',strtotime($t['accepted_at'])) ?>
+                        <?php if($t['accepted_by_name']): ?> by <?= e($t['accepted_by_name']) ?><?php endif; ?>
+                    </p>
+                    <?php endif; ?>
+                    <?php if($t['status'] === 'rejected' && $t['rejection_reason']): ?>
+                    <p class="coc-meta" style="margin-top:4px;color:var(--danger);">
+                        <i class="fas fa-xmark"></i> Reason: <?= e($t['rejection_reason']) ?>
+                    </p>
+                    <?php endif; ?>
+                    <?php if($t['hash_verified'] && $t['hash_at_transfer']): ?>
                     <div style="margin-top:6px;background:var(--surface2);border-radius:6px;padding:6px 10px;">
-                        <p style="font-size:10.5px;color:var(--muted)">SHA-256 at transfer: <span style="font-family:'Courier New',monospace;color:var(--text)"><?= e($t['hash_at_transfer']) ?></span></p>
+                        <p style="font-size:10px;color:var(--muted);margin-bottom:2px">SHA-256 at transfer:</p>
+                        <p style="font-family:'Courier New',monospace;font-size:10px;color:var(--text)"><?= e(substr($t['hash_at_transfer'], 0, 40)) ?>…</p>
+                    </div>
+                    <?php endif; ?>
+                    <?php if($t['status'] === 'pending' && (int)$t['to_user'] === $uid): ?>
+                    <div style="display:flex;gap:8px;margin-top:10px;">
+                        <a href="evidence_transfer.php?id=<?= $id ?>&action=accept" class="btn btn-gold btn-sm"><i class="fas fa-check"></i> Accept</a>
+                        <a href="evidence_transfer.php?id=<?= $id ?>&action=reject" class="btn btn-danger btn-sm"><i class="fas fa-xmark"></i> Reject</a>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -508,5 +551,6 @@ function copyText(id,label){
     if(val){navigator.clipboard.writeText(val).then(()=>{const btn=event.target.closest('button');if(btn){const orig=btn.innerHTML;btn.innerHTML='<i class="fas fa-check"></i> Copied!';btn.style.color='var(--success)';setTimeout(()=>{btn.innerHTML=orig;btn.style.color='';},1500);}});}
 }
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

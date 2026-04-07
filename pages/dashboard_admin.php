@@ -10,6 +10,8 @@ $stats['total_cases']     = (int)$pdo->query("SELECT COUNT(*) FROM cases")->fetc
 $stats['open_cases']      = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status IN ('open','under_investigation')")->fetchColumn();
 $stats['pending_requests']= (int)$pdo->query("SELECT COUNT(*) FROM account_requests WHERE status='pending'")->fetchColumn();
 $stats['tampered']        = (int)$pdo->query("SELECT COUNT(*) FROM hash_verifications WHERE integrity_status='tampered'")->fetchColumn();
+$stats['unassigned']      = (int)$pdo->query("SELECT COUNT(*) FROM evidence WHERE analysis_status='pending_assignment'")->fetchColumn();
+$stats['in_analysis']     = (int)$pdo->query("SELECT COUNT(*) FROM evidence WHERE analysis_status IN ('assigned','in_progress')")->fetchColumn();
 // Transfers feature removed - using shared access model
 
 // Storage usage
@@ -97,7 +99,7 @@ $msg = $_GET['msg'] ?? '';
 <title>Admin Dashboard — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/global.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
@@ -322,25 +324,25 @@ $msg = $_GET['msg'] ?? '';
             <?php if(empty($recent_evidence)): ?>
             <div class="empty-state"><i class="fas fa-database"></i><p>No evidence uploaded yet</p></div>
             <?php else: ?>
-            <table class="dc-table">
+            <div class="table-responsive"><table class="dc-table">
                 <thead><tr>
                     <th>Evidence</th><th>Case</th><th>Type</th><th>Uploaded</th><th>Status</th>
                 </tr></thead>
                 <tbody>
                 <?php foreach($recent_evidence as $ev): ?>
                 <tr>
-                    <td>
+                    <td data-label="Evidence">
                         <p style="font-weight:500;font-size:13px;"><?= e($ev['evidence_number']) ?></p>
                         <p style="font-size:11.5px;color:var(--muted);"><?= e(substr($ev['title'],0,28)) ?>...</p>
                     </td>
-                    <td><a href="pages/case_view.php?id=<?= $ev['case_id'] ?>" style="font-size:12px;color:var(--info);text-decoration:none"><?= e($ev['case_number']) ?></a></td>
-                    <td><span class="badge badge-blue"><?= ucfirst(str_replace('_',' ',e($ev['evidence_type']))) ?></span></td>
-                    <td><span style="font-size:12px;color:var(--muted)"><?= time_ago($ev['uploaded_at']) ?></span></td>
-                    <td><?= status_badge($ev['status']) ?></td>
+                    <td data-label="Case"><a href="pages/case_view.php?id=<?= $ev['case_id'] ?>" style="font-size:12px;color:var(--info);text-decoration:none"><?= e($ev['case_number']) ?></a></td>
+                    <td data-label="Type"><span class="badge badge-blue"><?= ucfirst(str_replace('_',' ',e($ev['evidence_type']))) ?></span></td>
+                    <td data-label="Uploaded"><span style="font-size:12px;color:var(--muted)"><?= time_ago($ev['uploaded_at']) ?></span></td>
+                    <td data-label="Status"><?= status_badge($ev['status']) ?></td>
                 </tr>
                 <?php endforeach; ?>
                 </tbody>
-            </table>
+            </table></div>
             <?php endif; ?>
         </div>
     </div>

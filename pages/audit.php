@@ -3,10 +3,17 @@
  * DigiCustody – Audit Log Page
  * Save to: /var/www/html/digicustody/pages/audit.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
+
+// Audit logs — admin only
+if (!is_admin()) {
+    header('Location: ' . BASE_URL . 'dashboard.php?error=access_denied');
+    exit;
+}
 
 // Only admin can see full audit log
 // Other roles see only their own logs
@@ -132,7 +139,7 @@ function page_url(int $p): string {
 <title>Audit Logs — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
@@ -215,7 +222,8 @@ function page_url(int $p): string {
 <!-- Page Header -->
 <div class="page-header">
     <div>
-        <h1>Audit Logs</h1>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <h1 style="margin-top:8px;">Audit Logs</h1>
         <p><?= $role === 'admin' ? 'Complete system activity trail — all user actions recorded' : 'Your personal activity log' ?></p>
     </div>
     <?php if ($role === 'admin'): ?>
@@ -543,5 +551,6 @@ function exportCSV(){
     a.click();
 }
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>

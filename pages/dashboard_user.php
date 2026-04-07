@@ -88,7 +88,7 @@ $type_icons = [
 <title>Dashboard — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/global.css">
 <style>
 .hash-chip{font-family:'Courier New',monospace;font-size:10.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;max-width:130px;}
@@ -203,15 +203,15 @@ $type_icons = [
     </div>
 
     <div style="overflow-x:auto;">
-    <table class="dc-table" style="table-layout:fixed;width:100%">
+    <div class="table-responsive"><table class="dc-table" style="table-layout:fixed;width:100%">
         <thead><tr>
-            <th style="width:115px">Evidence No.</th>
-            <th style="width:auto">Title, Type &amp; Case</th>
-            <th style="width:105px">Uploaded By</th>
-            <th style="width:130px">SHA-256 Hash</th>
-            <th style="width:65px">Size</th>
-            <th style="width:110px">Status &amp; Integrity</th>
-            <th style="width:75px">Date</th>
+            <th style="width:85px">Evidence</th>
+            <th style="width:220px">Title &amp; Case</th>
+            <th style="width:90px">Type</th>
+            <th style="width:95px">Uploader</th>
+            <th style="width:60px">Size</th>
+            <th style="width:95px">Status</th>
+            <th style="width:65px">Date</th>
             <th style="width:130px">Actions</th>
         </tr></thead>
         <tbody id="evBody">
@@ -219,77 +219,45 @@ $type_icons = [
             $tampered_row = ($ev['last_integrity'] === 'tampered');
             [$ico, $col]  = $type_icons[$ev['evidence_type']] ?? ['fa-file','gray'];
         ?>
-        <tr data-status="<?= e($ev['status']) ?>" <?= $tampered_row ? 'style="background:rgba(248,113,113,0.04)"' : '' ?>>
-            <!-- Evidence Number + report count -->
-            <td>
-                <span style="font-weight:700;font-size:12.5px;color:var(--gold);font-family:'Space Grotesk',sans-serif;display:block"><?= e($ev['evidence_number']) ?></span>
-                <span class="badge <?= (int)$ev['report_count']>0?'badge-green':'badge-gray' ?>" style="margin-top:4px;font-size:10px">
-                    <i class="fas fa-file-lines" style="font-size:9px"></i> <?= (int)$ev['report_count'] ?> report<?= $ev['report_count']!=1?'s':'' ?>
+        <tr data-status="<?= e($ev['status']) ?>" <?= $tampered_row ? 'style="background:rgba(248,113,113,0.04)"' : '' ?> onclick="window.location='pages/evidence_view.php?id=<?= $ev['id'] ?>'" style="cursor:pointer;<?= $tampered_row ? 'background:rgba(248,113,113,0.04)' : '' ?>">
+            <td data-label="Evidence No.">
+                <span style="font-weight:700;font-size:11px;color:var(--gold);font-family:'Space Grotesk',sans-serif;display:block"><?= e($ev['evidence_number']) ?></span>
+                <span class="badge <?= (int)$ev['report_count']>0?'badge-green':'badge-gray' ?>" style="margin-top:3px;font-size:9px">
+                    <i class="fas fa-file-lines" style="font-size:8px"></i> <?= (int)$ev['report_count'] ?>
                 </span>
             </td>
-            <!-- Title + type badge + case (all merged) -->
-            <td style="min-width:0">
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-                    <span class="badge badge-<?= $col ?>" style="font-size:10px;padding:2px 6px;flex-shrink:0;">
-                        <i class="fas <?= $ico ?>" style="font-size:9px"></i>
-                        <?= ucfirst(str_replace(['_capture','log_file','_data','_'],['',' log',' data',' '],$ev['evidence_type'])) ?>
-                    </span>
-                    <span style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= e($ev['title']) ?>"><?= e($ev['title']) ?></span>
-                </div>
-                <a href="pages/case_view.php?id=<?= $ev['case_id'] ?>" style="font-size:11px;color:var(--info);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;" title="<?= e($ev['case_title']) ?>">
-                    <i class="fas fa-folder-open" style="font-size:9px;margin-right:3px"></i><?= e($ev['case_number']) ?> — <?= e(substr($ev['case_title'],0,24)) ?>
+            <td data-label="Title & Case" style="min-width:0">
+                <span style="font-weight:500;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;max-width:180px;" title="<?= e($ev['title']) ?>"><?= e(substr($ev['title'],0,25)) ?></span>
+                <a href="pages/case_view.php?id=<?= $ev['case_id'] ?>" style="font-size:10px;color:var(--info);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px;" title="<?= e($ev['case_title']) ?>" onclick="event.stopPropagation()">
+                    <?= e($ev['case_number']) ?>
                 </a>
             </td>
-            <!-- Uploaded by -->
-            <td><span style="font-size:12.5px;white-space:nowrap"><?= e($ev['uploader_name']) ?></span></td>
-            <!-- Hash (SHA only, truncated with full on hover) -->
-            <td>
-                <span class="hash-chip" title="SHA-256: <?= e($ev['sha256_hash']) ?>" style="cursor:help">
-                    <?= e(substr($ev['sha256_hash'],0,18)) ?>...
-                </span>
-                <span class="hash-chip" title="MD5: <?= e($ev['md5_hash']) ?>" style="cursor:help;color:var(--dim);font-size:10px">
-                    md5: <?= e(substr($ev['md5_hash'],0,14)) ?>...
+            <td data-label="Type">
+                <span class="badge badge-<?= $col ?>" style="font-size:9px;padding:2px 5px;white-space:nowrap;">
+                    <i class="fas <?= $ico ?>" style="font-size:8px"></i> <?= ucfirst(str_replace(['_capture','log_file','_data','_'],['',' log',' data',' '],$ev['evidence_type'])) ?>
                 </span>
             </td>
-            <!-- Size -->
-            <td><span style="font-size:12px;color:var(--muted);white-space:nowrap"><?= format_filesize($ev['file_size']) ?></span></td>
-            <!-- Status + Integrity merged -->
-            <td>
+            <td data-label="Uploaded By"><span style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;" title="<?= e($ev['uploader_name']) ?>"><?= e($ev['uploader_name']) ?></span></td>
+            <td data-label="Size"><span style="font-size:11px;color:var(--muted);white-space:nowrap"><?= format_filesize($ev['file_size']) ?></span></td>
+            <td data-label="Status">
                 <?= status_badge($ev['status']) ?>
-                <div style="margin-top:4px">
                 <?php if ($tampered_row): ?>
-                    <span class="badge badge-red" style="font-size:10px"><i class="fas fa-triangle-exclamation"></i> Tampered</span>
+                <span class="badge badge-red" style="font-size:9px;margin-top:3px"><i class="fas fa-triangle-exclamation"></i> Tampered</span>
                 <?php elseif ($ev['last_integrity'] === 'intact'): ?>
-                    <span class="badge badge-green" style="font-size:10px"><i class="fas fa-check"></i> Intact</span>
+                <span class="badge badge-green" style="font-size:9px;margin-top:3px"><i class="fas fa-check"></i> Intact</span>
                 <?php else: ?>
-                    <span class="badge badge-gray" style="font-size:10px">Unchecked</span>
+                <span class="badge badge-gray" style="font-size:9px;margin-top:3px">Unchecked</span>
                 <?php endif; ?>
-                </div>
             </td>
-            <!-- Date -->
-            <td><span style="font-size:11.5px;color:var(--muted);white-space:nowrap"><?= date('M j, Y',strtotime($ev['uploaded_at'])) ?></span></td>
-            <!-- Actions - icon buttons only to save space -->
-            <td>
-                <div style="display:flex;flex-direction:column;gap:4px;">
-                    <div style="display:flex;gap:4px;">
-                        <a href="pages/evidence_view.php?id=<?= $ev['id'] ?>" class="btn btn-outline btn-sm" title="View evidence" style="flex:1;justify-content:center;">
-                            <i class="fas fa-eye"></i> View
-                        </a>
-                        <?php if (!is_viewer()): ?>
-                        <a href="pages/evidence_download.php?id=<?= $ev['id'] ?>" class="btn btn-outline btn-icon btn-sm" title="Download evidence">
-                            <i class="fas fa-download"></i>
-                        </a>
-                        <?php endif; ?>
-                    </div>
+            <td data-label="Date"><span style="font-size:10.5px;color:var(--muted);white-space:nowrap"><?= date('M j',strtotime($ev['uploaded_at'])) ?></span></td>
+            <td data-label="Actions">
+                <div style="display:flex;flex-direction:column;gap:3px;">
+                    <a href="pages/evidence_download.php?id=<?= $ev['id'] ?>" class="btn btn-download btn-sm" style="width:100%;justify-content:center;" title="Download" onclick="event.stopPropagation()"><i class="fas fa-download"></i> Download</a>
                     <?php if (can_analyse()): ?>
-                    <div style="display:flex;gap:4px;">
-                        <a href="pages/reports.php?evidence_id=<?= $ev['id'] ?>" class="btn btn-gold btn-sm" title="Submit report" style="flex:1;justify-content:center;">
-                            <i class="fas fa-file-lines"></i> Report
-                        </a>
+                    <div style="display:flex;gap:3px;">
+                        <a href="pages/reports.php?evidence_id=<?= $ev['id'] ?>" class="btn btn-gold btn-sm" style="flex:1;justify-content:center;" title="Report" onclick="event.stopPropagation()"><i class="fas fa-file-lines"></i> Report</a>
                         <?php if (!is_viewer()): ?>
-                        <a href="pages/coc_report.php?id=<?= $ev['id'] ?>" class="btn btn-outline btn-icon btn-sm" title="Chain of Custody Report">
-                            <i class="fas fa-file-shield"></i>
-                        </a>
+                        <a href="pages/coc_report.php?id=<?= $ev['id'] ?>" class="btn btn-coc btn-sm" style="flex:1;justify-content:center;" title="COC Report" onclick="event.stopPropagation()"><i class="fas fa-file-shield"></i> COC</a>
                         <?php endif; ?>
                     </div>
                     <?php endif; ?>
@@ -298,7 +266,7 @@ $type_icons = [
         </tr>
         <?php endforeach; ?>
         </tbody>
-    </table>
+    </table></div>
     </div>
 </div>
 
@@ -316,7 +284,7 @@ $type_icons = [
                 <p>No uploads yet.<?= can_upload() ? ' <a href="pages/evidence_upload.php" style="color:var(--gold)">Upload now</a>' : '' ?></p>
             </div>
             <?php else: ?>
-            <table class="dc-table">
+            <div class="table-responsive"><table class="dc-table">
                 <thead><tr><th>Evidence</th><th>Case</th><th>Status</th><th>When</th></tr></thead>
                 <tbody>
                 <?php foreach ($my_recent as $ev): ?>
@@ -331,7 +299,7 @@ $type_icons = [
                 </tr>
                 <?php endforeach; ?>
                 </tbody>
-            </table>
+            </table></div>
             <?php endif; ?>
         </div>
     </div>

@@ -3,9 +3,10 @@
  * DigiCustody – Analysis Reports Page
  * Save to: /var/www/html/digicustody/pages/reports.php
  */
+require_once __DIR__."/../config/functions.php";
+set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_once __DIR__.'/../config/functions.php';
 require_login();
 
 if (is_viewer()) {
@@ -131,7 +132,7 @@ $status_colors = ['draft'=>'gray','submitted'=>'warning','reviewed'=>'blue','app
 <title>Analysis Reports — DigiCustody</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="<?= BASE_URL ?>assets/css/font-awesome.min.css">
 <link rel="stylesheet" href="../assets/css/global.css">
 <style>
 .field{margin-bottom:16px;}
@@ -186,7 +187,8 @@ $status_colors = ['draft'=>'gray','submitted'=>'warning','reviewed'=>'blue','app
 
 <div class="page-header">
     <div>
-        <h1>Analysis Reports</h1>
+        <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <h1 style="margin-top:8px;">Analysis Reports</h1>
         <p><?= $role==='admin' ? 'All forensic analysis reports' : 'Your submitted analysis reports' ?></p>
     </div>
     <?php if (can_analyse()): ?>
@@ -400,5 +402,6 @@ function toggleReport(id){
 var st;document.getElementById('searchInput')?.addEventListener('input',function(){clearTimeout(st);st=setTimeout(function(){document.getElementById('filterForm').submit();},600);});
 <?php if ($ev_filter): ?>document.getElementById('newReportModal').style.display='flex';<?php endif; ?>
 </script>
+<script src="../assets/js/main.js"></script>
 </body>
 </html>
