@@ -117,7 +117,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reque
         $chk->execute([$email]);
         if ($chk->fetch()) {
             $req_error = 'A pending request already exists for this email.';
-        } else {
+            $chk2 = $pdo->prepare("SELECT id FROM users WHERE email=? LIMIT 1");
+            $chk2->execute([$email]);
+            if ($chk2->fetch()) {
+                $req_error = 'An account with this email address already exists. Contact your administrator if you need help logging in.';
+            } else {
             $pdo->prepare("INSERT INTO account_requests (full_name,email,phone,department,badge_number,requested_role,reason) VALUES(?,?,?,?,?,?,?)")
                 ->execute([$full_name,$email,$phone,$department,$badge,$role,$reason]);
             $rid = $pdo->lastInsertId();
@@ -128,6 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reque
             $show_modal  = false;
         }
     }
+            }
 }
 $csrf = csrf_token();
 ?>
