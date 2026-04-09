@@ -24,6 +24,12 @@ if (empty($user['backup_codes'])) {
 }
 $csrf = csrf_token();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $attempts = $_SESSION['2fa_attempts'] ?? 0;
+    if ($attempts >= 5) {
+        unset($_SESSION['pending_2fa_user'], $_SESSION['2fa_attempts']);
+        header('Location: login.php?error=locked');
+        exit;
+    }
     if (!verify_csrf($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid request.';
     } else {
@@ -34,6 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $result = verify_backup_code($user['backup_codes'], $code);
             if ($result['valid']) {
+                unset($_SESSION['2fa_attempts']);
                 $pdo->prepare("UPDATE users SET backup_codes = ? WHERE id = ?")
                     ->execute([json_encode($result['remaining_codes']), $user_id]);
                 
@@ -53,6 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: dashboard.php');
                 exit;
             } else {
+                $_SESSION['2fa_attempts'] = $attempts + 1;
                 $error = 'Invalid backup code.';
             }
         }

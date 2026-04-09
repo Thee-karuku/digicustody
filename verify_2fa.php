@@ -22,6 +22,12 @@ if (!$user) {
 }
 // Handle verification
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $attempts = $_SESSION['2fa_attempts'] ?? 0;
+    if ($attempts >= 5) {
+        unset($_SESSION['pending_2fa_user'], $_SESSION['2fa_attempts']);
+        header('Location: login.php?error=locked');
+        exit;
+    }
     if (!verify_csrf($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid request.';
     } else {
@@ -30,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if (!empty($user['two_factor_secret'])) {
             if (verify_2fa_code($user['two_factor_secret'], $code)) {
+                unset($_SESSION['2fa_attempts']);
                 // 2FA successful
                 secure_session_regenerate();
                 $_SESSION['user_id'] = $user['id'];
