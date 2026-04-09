@@ -914,6 +914,14 @@ function is_2fa_enabled($pdo, $user_id) {
     return $result && $result['two_factor_enabled'] == 1;
 }
 
+
+function get_user_email($pdo, $user_id) {
+    $stmt = $pdo->prepare("SELECT email FROM users WHERE id = ?");
+    $stmt->execute([$user_id]);
+    $result = $stmt->fetch();
+    return $result ? $result['email'] : '';
+}
+
 function get_user_2fa_secret($pdo, $user_id) {
     $stmt = $pdo->prepare("SELECT two_factor_secret FROM users WHERE id = ?");
     $stmt->execute([$user_id]);

@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'enabl
             unset($_SESSION['temp_2fa_secret']);
             $success = 'Two-factor authentication has been enabled!';
             
-            audit_log($pdo, $uid, $_SESSION['username'], $_SESSION['role'], '2fa_enabled', 'user', $uid, $_SESSION['username'], '2FA enabled', $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+            audit_log($pdo, $uid, get_user_email($pdo, $uid), $_SESSION['role'], '2fa_enabled', 'user', $uid, get_user_email($pdo, $uid), '2FA enabled', $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
         }
     }
 }
@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'disab
             disable_2fa($pdo, $uid);
             $success = 'Two-factor authentication has been disabled.';
             
-            audit_log($pdo, $uid, $_SESSION['username'], $_SESSION['role'], '2fa_disabled', 'user', $uid, $_SESSION['username'], '2FA disabled', $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+            audit_log($pdo, $uid, get_user_email($pdo, $uid), $_SESSION['role'], '2fa_disabled', 'user', $uid, get_user_email($pdo, $uid), '2FA disabled', $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
         }
     }
 }
@@ -69,11 +69,11 @@ $backup_codes = $two_factor_enabled ? json_decode($user_2fa['backup_codes'] ?? '
 if (!$two_factor_enabled && !isset($_SESSION['temp_2fa_secret'])) {
     $secret = generate_2fa_secret();
     $_SESSION['temp_2fa_secret'] = $secret;
-    $qr_url = get_2fa_qrcode_url($_SESSION['email'], $secret);
+    $qr_url = get_2fa_qrcode_url(get_user_email($pdo, $uid), $secret);
     $show_qr = true;
 } elseif (isset($_SESSION['temp_2fa_secret'])) {
     $secret = $_SESSION['temp_2fa_secret'];
-    $qr_url = get_2fa_qrcode_url($_SESSION['email'], $secret);
+    $qr_url = get_2fa_qrcode_url(get_user_email($pdo, $uid), $secret);
     $show_qr = true;
 }
 
