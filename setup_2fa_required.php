@@ -1,38 +1,31 @@
 <?php
-session_start();
 require_once 'config/db.php';
 require_once 'config/functions.php';
 
-set_security_headers();
 set_secure_session_config();
-
+session_start();
+set_security_headers();
 if (!isset($_SESSION['pending_2fa_setup'])) {
     header('Location: login.php');
     exit;
 }
-
 $user_id = $_SESSION['pending_2fa_setup'];
-
 // Get user info
 $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
-
 if (!$user) {
     header('Location: login.php');
     exit;
 }
-
 $error = '';
 $success = false;
-
 // Generate new secret if not set
 if (!isset($_SESSION['temp_2fa_secret'])) {
     $_SESSION['temp_2fa_secret'] = generate_2fa_secret();
 }
 $secret = $_SESSION['temp_2fa_secret'];
 $qr_url = get_2fa_qrcode_url($user['email'], $secret);
-
 // Handle verification
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf($_POST['csrf_token'] ?? '')) {
@@ -78,7 +71,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
-
 $csrf = csrf_token();
 ?>
 <!DOCTYPE html>
@@ -139,25 +131,20 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
     <div class="logo-row" style="justify-content:center;">
       <div class="lmark"><i class="fas fa-shield-halved"></i></div>
     </div>
-
     <div class="ttl" style="text-align:center;">Setup Two-Factor Authentication</div>
     <p class="sub" style="text-align:center;">This is required for your account. Set up your authenticator app to continue.</p>
-
     <div class="alert warning" style="margin-bottom:20px;">
       <i class="fas fa-exclamation-triangle"></i>
       <span>You must set up 2FA to access the system. This cannot be skipped.</span>
     </div>
-
     <?php if($error): ?>
       <div class="alert ae"><i class="fas fa-circle-exclamation"></i><?= e($error) ?></div>
     <?php endif; ?>
-
     <div class="user-info">
       <div class="avatar"><i class="fas fa-user"></i></div>
       <div class="name"><?= e($user['full_name']) ?></div>
       <div class="email"><?= e($user['email']) ?></div>
     </div>
-
     <div class="twofa-grid">
       <div>
         <h4 style="margin-bottom:10px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Step 1: Scan QR Code</h4>

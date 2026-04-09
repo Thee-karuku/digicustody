@@ -1,35 +1,28 @@
 <?php
-session_start();
 require_once 'config/db.php';
 require_once 'config/functions.php';
 
-set_security_headers();
 set_secure_session_config();
-
+session_start();
+set_security_headers();
 if (!isset($_SESSION['pending_2fa_user'])) {
     header('Location: login.php');
     exit;
 }
-
 $error = '';
 $user_id = $_SESSION['pending_2fa_user'];
-
 $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
-
 if (!$user) {
     header('Location: login.php');
     exit;
 }
-
 if (empty($user['backup_codes'])) {
     header('Location: verify_2fa.php');
     exit;
 }
-
 $csrf = csrf_token();
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid request.';
@@ -115,12 +108,9 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
     <div class="logo-row" style="justify-content:center;">
       <div class="lmark"><i class="fas fa-key"></i></div>
     </div>
-
     <div class="ttl" style="text-align:center;">Use Backup Code</div>
     <p class="sub" style="text-align:center;">Enter one of your backup codes to sign in.</p>
-
     <div class="info-box"><i class="fas fa-info-circle"></i> Each backup code can only be used once.</div>
-
     <form method="POST">
       <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
       <div class="fld">
@@ -129,9 +119,7 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
       </div>
       <button type="submit" class="btn"><i class="fas fa-sign-in-alt"></i> Sign In with Backup Code</button>
     </form>
-
     <p class="hint">Back to <a href="verify_2fa.php">2FA verification</a></p>
-
     <div class="brow">
       <a href="login.php"><i class="fas fa-arrow-left"></i> Back to Sign In</a>
     </div>

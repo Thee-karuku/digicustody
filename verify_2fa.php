@@ -1,30 +1,25 @@
 <?php
-session_start();
 require_once 'config/db.php';
 require_once 'config/functions.php';
 
-set_security_headers();
 set_secure_session_config();
-
+session_start();
+set_security_headers();
 if (!isset($_SESSION['pending_2fa_user'])) {
     header('Location: login.php');
     exit;
 }
-
 $error = '';
 $user_id = $_SESSION['pending_2fa_user'];
 $is_backup = false;
-
 // Get user info
 $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
-
 if (!$user) {
     header('Location: login.php');
     exit;
 }
-
 // Handle verification
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf($_POST['csrf_token'] ?? '')) {
@@ -95,7 +90,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Invalid verification code.';
     }
 }
-
 $csrf = csrf_token();
 ?>
 <!DOCTYPE html>
@@ -151,20 +145,16 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
     <div class="logo-row" style="justify-content:center;">
       <div class="lmark"><i class="fas fa-shield-halved"></i></div>
     </div>
-
     <div class="ttl" style="text-align:center;">Two-Factor Authentication</div>
     <p class="sub" style="text-align:center;">Enter the 6-digit code from your authenticator app.</p>
-
     <?php if($error): ?>
       <div class="alert ae"><i class="fas fa-circle-exclamation"></i><?= e($error) ?></div>
     <?php endif; ?>
-
     <div class="user-info">
       <div class="avatar"><i class="fas fa-user"></i></div>
       <div class="name"><?= e($user['full_name']) ?></div>
       <div class="email"><?= e($user['email']) ?></div>
     </div>
-
     <form method="POST">
       <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
       <div class="fld">
@@ -177,9 +167,7 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
       </label>
       <button type="submit" class="btn"><i class="fas fa-check"></i> Verify</button>
     </form>
-
     <p class="hint">Use a <a href="2fa_backup.php">backup code</a> if you can't access your authenticator app.</p>
-
     <div class="brow">
       <a href="login.php"><i class="fas fa-arrow-left"></i> Back to Sign In</a>
     </div>
