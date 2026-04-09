@@ -36,9 +36,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Full name, email, username and password are required.';
             } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 $err = 'Invalid email address.';
-            } elseif (strlen($password) < 8) {
-                $err = 'Password must be at least 8 characters.';
             } else {
+                $pw_check = validate_password_strength($password);
+                if (!$pw_check['valid']) {
+                    $err = implode('. ', $pw_check['errors']);
+                } else {
                 // Check duplicates
                 $chk = $pdo->prepare("SELECT id FROM users WHERE username=? OR email=?");
                 $chk->execute([$username, $email]);
@@ -55,6 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     audit_log($pdo,$uid,$_SESSION['username'],'admin','account_created',
                         'user',$new_id,$full_name,"Admin created account: $username ($role)");
                     $msg = "User account for <strong>$full_name</strong> created successfully.";
+                }
                 }
             }
         }
