@@ -12,7 +12,14 @@ $error = '';
 $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verify_csrf($_POST['csrf_token'] ?? '')) {
+    // Rate limiting: max 3 requests per 15 minutes per IP
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM rate_limits WHERE ip_address = ? AND action = 'forgot_password' AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)");
+    $stmt->execute([$ip]);
+    $count = (int)$stmt->fetchColumn();
+    if ($count >= 3) {
+        $error = 'Too many requests. Please wait before trying again.';
+    } elseif (!verify_csrf($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid request. Please try again.';
     } else {
         $email = trim($_POST['email'] ?? '');
@@ -23,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $result = generate_password_reset_token($pdo, $email);
             if ($result['success'] && isset($result['token'])) {
+                $pdo->prepare("INSERT INTO rate_limits (ip_address, action) VALUES (?, 'forgot_password')")->execute([$ip]);
                 send_password_reset_email($result['email'], $result['token']);
             }
             $success = 'If an account exists with this email, a password reset link has been sent.';
