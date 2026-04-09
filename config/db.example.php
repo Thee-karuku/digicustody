@@ -1,22 +1,32 @@
 <?php
 // ============================================================
-// DigiCustody – Database Configuration
+// DigiCustody – Database Configuration (EXAMPLE)
+// Copy this to db.php and fill in your credentials
 // File: config/db.php
 // ============================================================
 
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'digicustody');
-define('DB_USER', 'root');
-define('DB_PASS', 'DigiCustody@2025');
+define('DB_USER', 'your_username');
+define('DB_PASS', 'your_password');
 define('DB_CHARSET', 'utf8mb4');
 
 define('SITE_NAME', 'DigiCustody');
 define('SITE_TAGLINE', 'Secure Evidence Management Platform');
-define('BASE_URL', 'http://localhost/digicustody/');
-define('UPLOAD_DIR', '/var/www/html/digicustody/uploads/evidence/');
+$scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+$host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$script_path = $_SERVER['SCRIPT_NAME'] ?? '/';
+$base = dirname($script_path);
+if ($base === '/' || $base === '\\' || $base === '.') {
+    $base = '';
+} else {
+    $base = rtrim($base, '/');
+}
+define('BASE_URL', $scheme . '://' . $host . $base . '/');
+define('UPLOAD_DIR', __DIR__ . '/../uploads/evidence/');
 define('UPLOAD_URL', BASE_URL . 'uploads/evidence/');
-define('DOWNLOAD_TOKEN_EXPIRY', 24); // hours
-define('SESSION_TIMEOUT', 3600);     // seconds (1 hour)
+define('DOWNLOAD_TOKEN_EXPIRY', 4);
+if (!defined('SESSION_TIMEOUT')) define('SESSION_TIMEOUT', 3600);
 
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;

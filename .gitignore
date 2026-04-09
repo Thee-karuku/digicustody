@@ -1,21 +1,136 @@
-# Sessions
+# ===========================================
+# DigiCustody - Git Ignore
+# ===========================================
+
+# ===========================================
+# SENSITIVE FILES - NEVER COMMIT
+# ===========================================
+
+# Database configuration with credentials
+config/db.php
+config/db_*.php
+config/*local*.php
+
+# Environment files
+.env
+.env.*
+.env.local
+.env.production
+*.env
+
+# Credentials and secrets
+credentials.json
+secrets.json
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# ===========================================
+# SESSIONS & CACHE
+# ===========================================
+
 /sessions/*
 !/sessions/.gitkeep
+*.sess
+*.session
 
-# Uploads
-/uploads/*
+/cache/*
+!/cache/.gitkeep
+/cache/
+/temp/
+/tmp/
+
+# PHP OPcache
+*.opcache*
+/opcache/
+
+# ===========================================
+# UPLOADS & EVIDENCE FILES
+# ===========================================
+
+/uploads/evidence/*
 !/uploads/.gitkeep
+/uploads/*.zip
+/uploads/*.tar
+/uploads/*.gz
+/uploads/*.rar
 
-# Config (contains credentials)
-config/db.php
+# User uploads (any folder that might contain files)
+uploads/
+files/
+storage/
 
-# IDE / OS
+# ===========================================
+# LOGS
+# ===========================================
+
+*.log
+/logs/*
+/logs/
+
+# ===========================================
+# IDE & EDITOR
+# ===========================================
+
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
+*.sublime-*
 
-# Logs
-*.log
+# ===========================================
+# BUILD & DEPENDENCIES
+# ===========================================
+
+/vendor/
+/node_modules/
+/bower_components/
+/dist/
+
+# Composer
+composer.lock
+
+# NPM
+package-lock.json
+yarn.lock
+
+# ===========================================
+# BACKUPS
+# ===========================================
+
+*.bak
+*.backup
+*.old
+*.backup.sql
+*-backup.sql
+database.sql
+
+# ===========================================
+# SYSTEM FILES
+# ===========================================
+
+.htaccess
+.htpasswd
+.webconfig
+*.config.php
+
+# ===========================================
+# TESTING & DEV
+# ===========================================
+
+/tests/
+/test/
+/coverage/
+.phpunit.result.cache
+
+# Local development
+local/
+develop/
+dev.php
+test_*.php
+debug.php
