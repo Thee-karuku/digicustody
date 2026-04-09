@@ -16,8 +16,11 @@ $msg  = ''; $err = '';
 
 // Fetch fresh user data
 $stmt = $pdo->prepare("SELECT * FROM users WHERE id=?");
+
 $stmt->execute([$uid]);
 $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+$two_factor_enabled = !empty($user['two_factor_enabled']);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf($_POST['csrf_token'] ?? '')) {
@@ -35,6 +38,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Name and email are required.';
             } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 $err = 'Invalid email address.';
+            } elseif ($two_factor_enabled && $email !== $user['email']) {
+                $err = 'Email cannot be changed while 2FA is enabled. Disable 2FA first to change your email.';
             } else {
                 $pdo->prepare("UPDATE users SET full_name=?,email=?,department=?,phone=?,updated_at=NOW() WHERE id=?")
                     ->execute([$full_name,$email,$department,$phone,$uid]);
@@ -208,7 +213,13 @@ $csrf = csrf_token();
                     </div>
                     <div class="field">
                         <label>Email *</label>
+                        <?php if ($two_factor_enabled): ?>
+                        <input type="email" name="email" value="<?= e($user['email']) ?>" readonly style="background:var(--surface);cursor:not-allowed;">
+                        <input type="hidden" name="email" value="<?= e($user['email']) ?>">
+                        <small style="color:var(--warning);font-size:11px;"><i class="fas fa-lock"></i> Email locked - 2FA is enabled</small>
+                        <?php else: ?>
                         <input type="email" name="email" value="<?= e($user['email']) ?>" required>
+                        <?php endif; ?>
                     </div>
                     <div class="field">
                         <label>Department</label>

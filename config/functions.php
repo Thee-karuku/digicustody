@@ -833,8 +833,16 @@ function generate_2fa_secret() {
 }
 
 function get_2fa_qrcode_url($email, $secret, $issuer = 'DigiCustody') {
+    require_once __DIR__ . '/../vendor/autoload.php';
     $otpauth = 'otpauth://totp/' . rawurlencode($issuer . ':' . $email) . '?secret=' . $secret . '&issuer=' . rawurlencode($issuer) . '&algorithm=SHA1&digits=6&period=30';
-    return 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' . urlencode($otpauth);
+    
+    $qrcode = new \chillerlan\QRCode\QRCode(new \chillerlan\QRCode\QROptions([
+        'outputType' => 'png',
+        'scale' => 5,
+        'imageBase64' => true,
+    ]));
+    
+    return $qrcode->render($otpauth);
 }
 
 function verify_2fa_code($secret, $code) {
