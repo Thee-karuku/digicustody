@@ -681,7 +681,7 @@ define('PASSWORD_RESET_EXPIRY', 3600);
 
 function generate_password_reset_token($pdo, $email) {
     $email = trim($email);
-    $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ? AND status = 'active' LIMIT 1");
+    $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ? AND status = 'active' ORDER BY created_at DESC LIMIT 10");
     $stmt->execute([$email]);
     $user = $stmt->fetch();
 
@@ -706,7 +706,7 @@ function generate_password_reset_token($pdo, $email) {
 }
 
 function verify_password_reset_token($pdo, $token) {
-    $stmt = $pdo->prepare("SELECT * FROM password_resets WHERE used = 0 AND expires_at > NOW() LIMIT 1");
+    $stmt = $pdo->prepare("SELECT * FROM password_resets WHERE used = 0 AND expires_at > NOW() ORDER BY created_at DESC LIMIT 10");
     $stmt->execute();
     $records = $stmt->fetchAll();
 
