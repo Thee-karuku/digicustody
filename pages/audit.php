@@ -228,6 +228,9 @@ function page_url(int $p): string {
     </div>
     <?php if ($role === 'admin'): ?>
     <div style="display:flex;gap:10px;">
+        <a href="audit_export.php" target="_blank" class="btn btn-outline">
+            <i class="fas fa-file-pdf"></i> Printable Report
+        </a>
         <button class="btn btn-outline" onclick="exportCSV()">
             <i class="fas fa-file-csv"></i> Export CSV
         </button>

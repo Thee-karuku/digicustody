@@ -27,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $email      = trim($_POST['email'] ?? '');
             $username   = trim($_POST['username'] ?? '');
             $password   = $_POST['password'] ?? '';
-            $role       = in_array($_POST['role']??'',['admin','investigator','analyst','viewer']) ? $_POST['role'] : 'viewer';
+            $role       = in_array($_POST['role']??'',['admin','investigator','analyst']) ? $_POST['role'] : 'analyst';
             $department = trim($_POST['department'] ?? '');
             $badge      = trim($_POST['badge_number'] ?? '');
             $phone      = trim($_POST['phone'] ?? '');
@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $target_id  = (int)$_POST['target_id'];
             $full_name  = trim($_POST['full_name'] ?? '');
             $email      = trim($_POST['email'] ?? '');
-            $role       = in_array($_POST['role']??'',['admin','investigator','analyst','viewer']) ? $_POST['role'] : 'viewer';
+            $role       = in_array($_POST['role']??'',['admin','investigator','analyst']) ? $_POST['role'] : 'analyst';
             $department = trim($_POST['department'] ?? '');
             $badge      = trim($_POST['badge_number'] ?? '');
             $phone      = trim($_POST['phone'] ?? '');
@@ -339,10 +339,6 @@ function si($col) {
         <p class="sr-val" style="color:var(--success)"><?= $rc['analyst'] ?? 0 ?></p>
         <p class="sr-lbl">Analysts</p>
     </div>
-    <div class="sr-card">
-        <p class="sr-val" style="color:var(--muted)"><?= $rc['viewer'] ?? 0 ?></p>
-        <p class="sr-lbl">Viewers</p>
-    </div>
 </div>
 
 <!-- Filters -->
@@ -354,7 +350,7 @@ function si($col) {
                 value="<?= e($search) ?>">
             <select name="role" onchange="this.form.submit()">
                 <option value="">All Roles</option>
-                <?php foreach (['admin','investigator','analyst','viewer'] as $r): ?>
+                <?php foreach (['admin','investigator','analyst'] as $r): ?>
                 <option value="<?= $r ?>" <?= $filter_role===$r?'selected':'' ?>><?= ucfirst($r) ?></option>
                 <?php endforeach; ?>
             </select>
@@ -503,7 +499,6 @@ function si($col) {
                         <select name="role">
                             <option value="investigator">Investigator</option>
                             <option value="analyst">Analyst</option>
-                            <option value="viewer">Viewer</option>
                             <option value="admin">Admin</option>
                         </select>
                     </div>
@@ -526,7 +521,14 @@ function si($col) {
                     <div class="field">
                         <label>Password * (min 8 chars)</label>
                         <div class="pass-wrap">
-                            <input type="password" name="password" id="createPw" placeholder="Set a strong password" required>
+                            <input type="password" name="password" id="createPw" placeholder="Set a strong password" minlength="8" required oninput="updateStrengthMeter(this.id, 'pwStrength', 'pwStrengthLabel')">
+                            <div style="margin-top:6px;">
+                                <div style="height:4px;background:#2e4060;border-radius:2px;overflow:hidden;">
+                                    <div id="pwStrength" style="height:100%;width:0%;background:#6b7280;transition:all .3s;"></div>
+                                </div>
+                                <p id="pwStrengthLabel" style="font-size:11px;margin:4px 0 0 0;color:#6b7280;"></p>
+                                <p style="font-size:10px;color:#6b82a0;margin:2px 0 0 0;">Min: 8 chars, upper, lower, number, special (!@#$...)</p>
+                            </div>
                             <button type="button" class="pass-eye" onclick="togglePw('createPw','createPwEye')">
                                 <i class="fas fa-eye" id="createPwEye"></i>
                             </button>
@@ -574,7 +576,6 @@ function si($col) {
                         <select name="role" id="editRole">
                             <option value="investigator">Investigator</option>
                             <option value="analyst">Analyst</option>
-                            <option value="viewer">Viewer</option>
                             <option value="admin">Admin</option>
                         </select>
                     </div>
@@ -789,6 +790,56 @@ showToast('success','Success','<?= addslashes($msg) ?>');
 showToast('error','Error','<?= addslashes($err) ?>');
 <?php endif; ?>
 </script>
+<script>
+function checkPasswordStrength(password) {
+    let score = 0;
+    let label = "Weak";
+    let color = "#ef4444";
+    
+    if (password.length >= 8) score += 20;
+    if (password.length >= 12) score += 10;
+    if (password.length >= 16) score += 10;
+    if (/[a-z]/.test(password)) score += 15;
+    if (/[A-Z]/.test(password)) score += 15;
+    if (/[0-9]/.test(password)) score += 15;
+    if (/[!@#$%^&*()]/.test(password)) score += 15;
+    
+    if (score >= 80) { label = "Strong"; color = "#10b981"; }
+    else if (score >= 60) { label = "Good"; color = "#22c55e"; }
+    else if (score >= 40) { label = "Fair"; color = "#f59e0b"; }
+    
+    return { score, label, color };
+}
+
+function updateStrengthMeter(inputId, meterId, labelId) {
+    const password = document.getElementById(inputId).value;
+    const meter = document.getElementById(meterId);
+    const label = document.getElementById(labelId);
+    
+    if (!password) {
+        meter.style.width = "0%";
+        meter.style.background = "#6b7280";
+        label.textContent = "";
+        return;
+    }
+    
+    const result = checkPasswordStrength(password);
+    meter.style.width = result.score + "%";
+    meter.style.background = result.color;
+    label.textContent = result.label;
+    label.style.color = result.color;
+}
+
+document.addEventListener("DOMContentLoaded", function() {
+    const createPw = document.getElementById("createPw");
+    if (createPw) {
+        createPw.addEventListener("input", function() {
+            updateStrengthMeter("createPw", "pwStrength", "pwStrengthLabel");
+        });
+    }
+});
+</script>
+
 <script src="../assets/js/main.js"></script>
 </body>
 </html>

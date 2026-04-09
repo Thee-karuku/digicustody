@@ -9,10 +9,6 @@ session_start();
 require_once __DIR__.'/../config/db.php';
 require_login();
 
-if (is_viewer()) {
-    header('Location: ../dashboard.php?error=access_denied'); exit;
-}
-
 $page_title = 'Downloads';
 $uid  = $_SESSION['user_id'];
 $role = $_SESSION['role'];

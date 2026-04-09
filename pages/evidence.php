@@ -44,11 +44,13 @@ $type_icons = [
 $where  = ['1=1'];
 $params = [];
 
-// All non-admin roles are scoped to case_access
-if (!is_admin()) {
+// Analysts are scoped to cases they are assigned to
+// Investigators and Admins see all evidence
+if ($role === 'analyst') {
     $where[] = "(e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
+                OR e.case_id IN (SELECT id FROM cases WHERE assigned_analyst=?)
                 OR e.uploaded_by=? OR e.current_custodian=?)";
-    $params = array_merge($params, [$uid, $uid, $uid]);
+    $params = array_merge($params, [$uid, $uid, $uid, $uid]);
 }
 
 if ($search !== '') {
@@ -475,13 +477,11 @@ function page_url(int $p): string {
             </td>
             <td data-label="Actions">
                 <div style="display:flex;flex-direction:column;gap:4px;">
-                    <?php if (!is_viewer()): ?>
                     <a href="evidence_download.php?id=<?= (int)$ev['id'] ?>" class="btn btn-download btn-sm" style="width:100%;justify-content:center;" title="Download" onclick="event.stopPropagation()"><i class="fas fa-download"></i> Download</a>
                     <div style="display:flex;gap:4px;">
                         <a href="evidence_verify.php?id=<?= (int)$ev['id'] ?>" class="btn btn-outline btn-sm" style="flex:1;justify-content:center;" title="Verify Integrity" onclick="event.stopPropagation()"><i class="fas fa-fingerprint"></i> Verify</a>
                         <a href="coc_report.php?id=<?= (int)$ev['id'] ?>" class="btn btn-coc btn-sm" style="flex:1;justify-content:center;" title="COC Report" onclick="event.stopPropagation()"><i class="fas fa-file-shield"></i> COC</a>
                     </div>
-                    <?php endif; ?>
                 </div>
             </td>
         </tr>

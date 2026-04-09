@@ -23,10 +23,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'site_name'                   => trim($_POST['site_name'] ?? ''),
             'site_tagline'                => trim($_POST['site_tagline'] ?? ''),
             'institution_name'            => trim($_POST['institution_name'] ?? ''),
-            'download_token_expiry_hours' => max(1, (int)($_POST['download_token_expiry_hours'] ?? 24)),
+            'download_token_expiry_hours' => max(1, (int)($_POST['download_token_expiry_hours'] ?? 4)),
             'max_upload_size_mb'          => max(1, (int)($_POST['max_upload_size_mb'] ?? 500)),
             'session_timeout_minutes'     => max(5, (int)($_POST['session_timeout_minutes'] ?? 60)),
-            'allow_viewer_download'       => isset($_POST['allow_viewer_download']) ? '1' : '0',
+            'mandatory_2fa'              => isset($_POST['mandatory_2fa']) ? '1' : '0',
         ];
 
         foreach ($settings as $key => $value) {
@@ -145,7 +145,7 @@ $csrf = csrf_token();
                     <div class="field">
                         <label>Default Download Token Expiry (hours)</label>
                         <input type="number" name="download_token_expiry_hours" min="1" max="72"
-                            value="<?= e($settings['download_token_expiry_hours'] ?? 24) ?>">
+                            value="<?= e($settings['download_token_expiry_hours'] ?? 4) ?>">
                         <p class="hint">Default expiry time for secure evidence download links.</p>
                     </div>
                     <div class="field">
@@ -156,12 +156,11 @@ $csrf = csrf_token();
                     </div>
                     <div class="toggle-row">
                         <div>
-                            <p class="toggle-label">Allow Viewers to Download Evidence</p>
-                            <p class="toggle-desc">If enabled, users with Viewer role can download evidence files.</p>
+                            <div class="toggle-label">Mandatory 2FA</div>
+                            <div class="toggle-desc">Require all users to enable 2FA on first login</div>
                         </div>
                         <label class="toggle-switch">
-                            <input type="checkbox" name="allow_viewer_download" value="1"
-                                <?= ($settings['allow_viewer_download'] ?? '0') === '1' ? 'checked' : '' ?>>
+                            <input type="checkbox" name="mandatory_2fa" value="1" <?= ($settings['mandatory_2fa'] ?? '0') === '1' ? 'checked' : '' ?>>
                             <span class="toggle-slider"></span>
                         </label>
                     </div>

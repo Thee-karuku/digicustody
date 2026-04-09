@@ -9,12 +9,6 @@ session_start();
 require_once __DIR__.'/../config/db.php';
 require_login();
 
-// Viewers cannot manage cases — redirect to dashboard
-if (is_viewer()) {
-    header('Location: ' . BASE_URL . 'dashboard.php?error=access_denied');
-    exit;
-}
-
 $page_title = 'Cases';
 $uid  = $_SESSION['user_id'];
 $role = $_SESSION['role'];
@@ -66,11 +60,12 @@ $dir  = strtoupper($_GET['dir']??'DESC')==='ASC' ? 'ASC' : 'DESC';
 
 $where = ['1=1']; $params = [];
 
-// All non-admin roles are scoped to assigned cases
-if (!is_admin()) {
+// Analysts only see cases they are assigned to or have access to
+// Investigators and Admins see all cases
+if ($role === 'analyst') {
     $where[] = "(c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
-                OR c.assigned_analyst=? OR c.created_by=? OR c.assigned_to=?)";
-    $params = array_merge($params, [$uid, $uid, $uid, $uid]);
+                OR c.assigned_analyst=? OR c.created_by=?)";
+    $params = array_merge($params, [$uid, $uid, $uid]);
 }
 
 if ($search !== '') {
@@ -92,18 +87,24 @@ $cases_stmt = $pdo->prepare("
 $cases_stmt->execute($params);
 $cases = $cases_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Stats — scoped to non-admin
+// Stats — scoped to analyst only
 if (is_admin()) {
     $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases")->fetchColumn();
     $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='open'")->fetchColumn();
     $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='under_investigation'")->fetchColumn();
     $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='closed'")->fetchColumn();
-} else {
-    $cf = "WHERE id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR assigned_analyst=$uid OR created_by=$uid OR assigned_to=$uid";
+} elseif ($role === 'analyst') {
+    $cf = "WHERE id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR assigned_analyst=$uid OR created_by=$uid";
     $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases $cf")->fetchColumn();
     $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='open'")->fetchColumn();
     $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='under_investigation'")->fetchColumn();
     $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='closed'")->fetchColumn();
+} else {
+    // Investigators see all cases
+    $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases")->fetchColumn();
+    $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='open'")->fetchColumn();
+    $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='under_investigation'")->fetchColumn();
+    $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='closed'")->fetchColumn();
 }
 
 $csrf = csrf_token();

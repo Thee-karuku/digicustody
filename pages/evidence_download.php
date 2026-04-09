@@ -9,10 +9,6 @@ session_start();
 require_once __DIR__.'/../config/db.php';
 require_login();
 
-if (is_viewer()) {
-    header('Location: ../dashboard.php?error=access_denied'); exit;
-}
-
 $page_title = 'Download Evidence';
 $uid  = $_SESSION['user_id'];
 $role = $_SESSION['role'];
@@ -50,6 +46,44 @@ if (isset($_GET['token'])) {
     $file_path = $td['file_path'];
     if (!file_exists($file_path)) {
         die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ File Not Found</h2><p style="color:#6b82a0;margin-top:10px">The evidence file could not be located on the server.</p></div>');
+    }
+
+    // ── SHA-256 Verification on Download ────────────────────────
+    // Re-hash file at download time and compare against stored hash
+    $stored_sha256 = $td['sha256_hash'] ?? '';
+    $stored_md5 = $td['md5_hash'] ?? '';
+    
+    if ($stored_sha256 || $stored_md5) {
+        $integrity = verify_file_integrity($file_path, $stored_sha256, $stored_md5);
+        
+        if ($integrity === 'file_missing') {
+            die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ File Missing</h2><p style="color:#6b82a0;margin-top:10px">The evidence file no longer exists on the server.</p></div>');
+        }
+        
+        if ($integrity === 'tampered') {
+            // Log integrity failure but still allow download (with warning header)
+            $current_sha256 = hash_file('sha256', $file_path);
+            $current_md5 = hash_file('md5', $file_path);
+            
+            audit_log($pdo, $uid, $_SESSION['username'], $role,
+                'integrity_check_failed', 'evidence', $td['evidence_id'], $td['evidence_number'],
+                "INTEGRITY MISMATCH! Stored SHA256: {$stored_sha256}, Current SHA256: {$current_sha256}",
+                $_SERVER['REMOTE_ADDR'] ?? '');
+            
+            // Notify admins
+            $admins = $pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll();
+            foreach ($admins as $admin) {
+                send_notification($pdo, $admin['id'], '🔴 INTEGRITY ALERT', 
+                    "Evidence {$td['evidence_number']} hash mismatch detected during download! File may be corrupted or tampered.", 
+                    'danger', 'evidence', $td['evidence_id']);
+            }
+            
+            // Update evidence record with integrity flag
+            $pdo->prepare("UPDATE evidence SET is_verified=0 WHERE id=?")->execute([$td['evidence_id']]);
+            
+            // Add warning header but allow download
+            header('X-Integrity-Warning: SHA256 mismatch detected - file may be corrupted');
+        }
     }
 
     // Mark token as used

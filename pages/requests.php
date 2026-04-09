@@ -33,26 +33,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$action,$notes,$uid,$req_id]);
 
                 if ($action === 'approved') {
-                    // Auto-create user account
-                    $base     = strtolower(preg_replace('/[^a-zA-Z0-9]/','.', explode(' ',$req['full_name'])[0]));
-                    $username = $base . rand(100,999);
-                    $temp_pw  = 'DC@' . rand(10000,99999);
-                    $hashed   = password_hash($temp_pw, PASSWORD_BCRYPT, ['cost'=>12]);
+                    // Check if user already exists
+                    $chk = $pdo->prepare("SELECT id FROM users WHERE email=?");
+                    $chk->execute([$req['email']]);
+                    if ($chk->fetch()) {
+                        $msg = "Error: A user with email <strong>{$req['email']}</strong> already exists.";
+                    } else {
+                        // Use first name as username (one name only)
+                        $name_parts = explode(' ', trim($req['full_name']));
+                        $base_username = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $name_parts[0]));
+                        if (strlen($base_username) < 3) {
+                            $base_username = 'user' . substr(md5($req['full_name']), 0, 4);
+                        }
+                        
+                        // Check if username exists and make unique
+                        $username = $base_username;
+                        $counter = 1;
+                        while (true) {
+                            $chk = $pdo->prepare("SELECT id FROM users WHERE username=?");
+                            $chk->execute([$username]);
+                            if (!$chk->fetch()) break;
+                            $username = $base_username . $counter;
+                            $counter++;
+                        }
+                        
+                        // Generate strong password
+                        $temp_pw = generate_strong_password(12);
+                        $hashed = password_hash($temp_pw, PASSWORD_BCRYPT, ['cost'=>12]);
 
-                    $pdo->prepare("INSERT INTO users (full_name,email,username,password,role,status,phone,department,badge_number,created_by)
-                        VALUES(?,?,?,?,?,?,?,?,?,?)")
-                        ->execute([$req['full_name'],$req['email'],$username,$hashed,
-                                   $req['requested_role'],'active',$req['phone'],
-                                   $req['department'],$req['badge_number'],$uid]);
-                    $new_uid = $pdo->lastInsertId();
+                        $pdo->prepare("INSERT INTO users (full_name,email,username,password,role,status,phone,department,badge_number,created_by)
+                            VALUES(?,?,?,?,?,?,?,?,?,?)")
+                            ->execute([$req['full_name'],$req['email'],$username,$hashed,
+                                       $req['requested_role'],'active',$req['phone'],
+                                       $req['department'],$req['badge_number'],$uid]);
+                        $new_uid = $pdo->lastInsertId();
 
-                    send_notification($pdo,$new_uid,'Account Approved & Created',
-                        "Your request was approved. Username: $username | Temp Password: $temp_pw",'success');
-                    audit_log($pdo,$uid,$_SESSION['username'],'admin','account_request_approved',
-                        'account_request',$req_id,$req['full_name'],
-                        "Request approved. Account created: $username ({$req['requested_role']})");
+                        send_notification($pdo,$new_uid,'Account Approved & Created',
+                            "Your request was approved. Username: $username | Temp Password: $temp_pw",'success');
+                        audit_log($pdo,$uid,$_SESSION['username'],'admin','account_request_approved',
+                            'account_request',$req_id,$req['full_name'],
+                            "Request approved. Account created: $username ({$req['requested_role']})");
 
-                    $msg = "Request approved. Account created — Username: <code style='background:var(--surface2);padding:2px 8px;border-radius:4px;color:var(--gold)'>$username</code> &nbsp; Temp PW: <code style='background:var(--surface2);padding:2px 8px;border-radius:4px;color:var(--gold)'>$temp_pw</code>";
+                        send_account_approval_email($req['email'], $req['full_name'], $username, $temp_pw, $req['requested_role']);
+
+                        $msg = "Request approved. Account created — Username: <code style='background:var(--surface2);padding:2px 8px;border-radius:4px;color:var(--gold)'>$username</code> &nbsp; Temp PW: <code style='background:var(--surface2);padding:2px 8px;border-radius:4px;color:var(--gold)'>$temp_pw</code>";
+                    }
                 } else {
                     audit_log($pdo,$uid,$_SESSION['username'],'admin','account_request_rejected',
                         'account_request',$req_id,$req['full_name'],'Request rejected by admin');
@@ -88,7 +113,7 @@ $rejected_count = (int)$pdo->query("SELECT COUNT(*) FROM account_requests WHERE 
 
 $csrf = csrf_token();
 
-$role_colors = ['investigator'=>'blue','analyst'=>'green','viewer'=>'gray'];
+$role_colors = ['investigator'=>'blue','analyst'=>'green'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -104,18 +129,23 @@ $role_colors = ['investigator'=>'blue','analyst'=>'green','viewer'=>'gray'];
 .req-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:14px;transition:border-color .2s;}
 .req-card:hover{border-color:var(--border2);}
 .req-card.pending{border-left:3px solid var(--warning);}
-.req-card.approved{border-left:3px solid var(--success);opacity:.75;}
-.req-card.rejected{border-left:3px solid var(--danger);opacity:.65;}
-.req-top{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px;flex-wrap:wrap;}
-.req-avatar{width:44px;height:44px;border-radius:50%;background:var(--gold-dim);border:1px solid rgba(201,168,76,0.2);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;color:var(--gold);flex-shrink:0;}
-.req-name{font-size:15px;font-weight:600;color:var(--text);}
-.req-meta{font-size:12.5px;color:var(--muted);margin-top:3px;display:flex;flex-wrap:wrap;gap:8px;}
-.req-meta span{display:flex;align-items:center;gap:4px;}
-.req-reason{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;font-size:13px;color:var(--muted);font-style:italic;line-height:1.6;margin-bottom:14px;}
-.req-reason::before{content:'"';color:var(--gold);font-size:18px;line-height:0;vertical-align:-4px;margin-right:3px;}
-.req-reason::after{content:'"';color:var(--gold);font-size:18px;line-height:0;vertical-align:-4px;margin-left:3px;}
-.req-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-.notes-input{flex:1;min-width:160px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12.5px;color:var(--text);outline:none;font-family:'Inter',sans-serif;}
+.req-card.approved{border-left:3px solid var(--success);}
+.req-card.rejected{border-left:3px solid var(--danger);}
+.req-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:16px;flex-wrap:wrap;}
+.req-avatar{width:56px;height:56px;border-radius:50%;background:var(--gold-dim);border:2px solid rgba(201,168,76,0.3);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:var(--gold);flex-shrink:0;}
+.req-name{font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;}
+.req-email{font-size:13px;color:var(--gold);margin-bottom:6px;}
+.req-details{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;}
+.req-details-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;}
+.req-detail-item{display:flex;flex-direction:column;gap:4px;}
+.req-detail-label{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--dim);font-weight:600;}
+.req-detail-value{font-size:13px;color:var(--text);font-weight:500;}
+.req-detail-value.highlight{color:var(--gold);}
+.req-reason-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;}
+.req-reason-label{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--dim);font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.req-reason-text{font-size:13px;color:var(--text);line-height:1.6;font-style:italic;}
+.req-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--border);}
+.notes-input{flex:1;min-width:160px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text);outline:none;font-family:'Inter',sans-serif;}
 .notes-input:focus{border-color:rgba(201,168,76,0.4);}
 .tab-bar{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px;}
 .tab-link{padding:10px 20px;font-size:13.5px;color:var(--muted);border-bottom:2px solid transparent;text-decoration:none;transition:all .2s;display:flex;align-items:center;gap:7px;margin-bottom:-1px;}
@@ -126,7 +156,8 @@ $role_colors = ['investigator'=>'blue','analyst'=>'green','viewer'=>'gray'];
 .sr-card:hover{border-color:var(--border2);}
 .sr-val{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;}
 .sr-lbl{font-size:12px;color:var(--muted);margin-top:4px;}
-.admin-note{background:rgba(74,222,128,0.05);border:1px solid rgba(74,222,128,0.15);border-radius:7px;padding:8px 12px;font-size:12px;color:var(--muted);margin-top:8px;}
+.admin-note{background:rgba(74,222,128,0.05);border:1px solid rgba(74,222,128,0.15);border-radius:7px;padding:10px 14px;font-size:13px;color:var(--text);margin-top:8px;}
+.admin-note-label{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--success);font-weight:600;margin-bottom:4px;}
 .filter-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 18px;margin-bottom:20px;}
 .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .filter-row input{flex:1;min-width:200px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);outline:none;font-family:'Inter',sans-serif;transition:border-color .2s;}
@@ -210,37 +241,60 @@ $role_colors = ['investigator'=>'blue','analyst'=>'green','viewer'=>'gray'];
 <div id="requestsList">
 <?php foreach ($requests as $req): ?>
 <div class="req-card <?= $req['status'] ?>">
-    <div class="req-top">
-        <div style="display:flex;align-items:flex-start;gap:12px;flex:1;">
+    <div class="req-header">
+        <div style="display:flex;align-items:flex-start;gap:14px;flex:1;">
             <div class="req-avatar"><?= strtoupper(substr($req['full_name'],0,2)) ?></div>
             <div style="flex:1;min-width:0;">
                 <p class="req-name"><?= e($req['full_name']) ?></p>
-                <div class="req-meta">
-                    <span><i class="fas fa-envelope"></i> <?= e($req['email']) ?></span>
-                    <?php if ($req['phone']): ?>
-                    <span><i class="fas fa-phone"></i> <?= e($req['phone']) ?></span>
+                <p class="req-email"><?= e($req['email']) ?></p>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <?php if ($req['status'] === 'pending'): ?>
+                    <span class="badge badge-<?= $role_colors[$req['requested_role']]??'gray' ?>">
+                        <i class="fas fa-user-tag" style="font-size:9px"></i>
+                        <?= ucfirst($req['requested_role']) ?> Requested
+                    </span>
+                    <?php else: ?>
+                    <?= status_badge($req['status']) ?>
                     <?php endif; ?>
-                    <?php if ($req['department']): ?>
-                    <span><i class="fas fa-building"></i> <?= e($req['department']) ?></span>
-                    <?php endif; ?>
-                    <?php if ($req['badge_number']): ?>
-                    <span><i class="fas fa-id-badge"></i> <?= e($req['badge_number']) ?></span>
-                    <?php endif; ?>
-                    <span><i class="fas fa-clock"></i> <?= time_ago($req['created_at']) ?></span>
                 </div>
             </div>
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
-            <span class="badge badge-<?= $role_colors[$req['requested_role']]??'gray' ?>">
-                <i class="fas fa-user-tag" style="font-size:9px"></i>
-                <?= ucfirst($req['requested_role']) ?> requested
-            </span>
-            <?= status_badge($req['status']) ?>
+    </div>
+
+    <!-- Details Section -->
+    <div class="req-details">
+        <div class="req-details-grid">
+            <?php if ($req['phone']): ?>
+            <div class="req-detail-item">
+                <span class="req-detail-label"><i class="fas fa-phone" style="margin-right:4px"></i> Phone</span>
+                <span class="req-detail-value"><?= e($req['phone']) ?></span>
+            </div>
+            <?php endif; ?>
+            <?php if ($req['department']): ?>
+            <div class="req-detail-item">
+                <span class="req-detail-label"><i class="fas fa-building" style="margin-right:4px"></i> Department</span>
+                <span class="req-detail-value"><?= e($req['department']) ?></span>
+            </div>
+            <?php endif; ?>
+            <?php if ($req['badge_number']): ?>
+            <div class="req-detail-item">
+                <span class="req-detail-label"><i class="fas fa-id-badge" style="margin-right:4px"></i> Badge / Staff No.</span>
+                <span class="req-detail-value highlight"><?= e($req['badge_number']) ?></span>
+            </div>
+            <?php endif; ?>
+            <div class="req-detail-item">
+                <span class="req-detail-label"><i class="fas fa-calendar" style="margin-right:4px"></i> Request Date</span>
+                <span class="req-detail-value"><?= date('M j, Y H:i', strtotime($req['created_at'])) ?></span>
+            </div>
         </div>
     </div>
 
+    <!-- Reason Section -->
     <?php if ($req['reason']): ?>
-    <div class="req-reason"><?= e($req['reason']) ?></div>
+    <div class="req-reason-box">
+        <div class="req-reason-label"><i class="fas fa-comment-dots"></i> Reason for Access Request</div>
+        <p class="req-reason-text"><?= e($req['reason']) ?></p>
+    </div>
     <?php endif; ?>
 
     <?php if ($req['status'] === 'pending'): ?>
@@ -249,26 +303,30 @@ $role_colors = ['investigator'=>'blue','analyst'=>'green','viewer'=>'gray'];
         <input type="hidden" name="req_id"     value="<?= $req['id'] ?>">
         <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
         <div class="req-actions">
-            <input type="text" name="admin_notes" class="notes-input" placeholder="Optional notes for this decision...">
+            <input type="text" name="admin_notes" class="notes-input" placeholder="Add notes for this decision (optional)...">
             <button type="submit" name="req_action" value="approved"
                 class="btn btn-success"
-                onclick="return confirm('Approve this request and create user account?')">
+                onclick="return confirm('Approve this request and create user account?\n\nName: <?= e($req['full_name']) ?>\nEmail: <?= e($req['email']) ?>\nRole: <?= ucfirst($req['requested_role']) ?>')">
                 <i class="fas fa-check"></i> Approve &amp; Create Account
             </button>
             <button type="submit" name="req_action" value="rejected"
                 class="btn btn-danger"
-                onclick="return confirm('Reject this request?')">
+                onclick="return confirm('Reject this request from <?= e($req['full_name']) ?>?')">
                 <i class="fas fa-xmark"></i> Reject
             </button>
         </div>
     </form>
 
-    <?php elseif ($req['admin_notes']): ?>
+    <?php elseif ($req['admin_notes'] || $req['reviewed_at']): ?>
     <div class="admin-note">
-        <i class="fas fa-comment-dots" style="color:var(--success);margin-right:5px"></i>
-        Admin note: <?= e($req['admin_notes']) ?>
+        <div class="admin-note-label"><i class="fas fa-check-circle" style="margin-right:4px"></i> Admin Decision</div>
+        <?php if ($req['admin_notes']): ?>
+        <p style="margin-bottom:4px;"><?= e($req['admin_notes']) ?></p>
+        <?php endif; ?>
         <?php if ($req['reviewed_at']): ?>
-        &nbsp;·&nbsp; <?= date('M j, Y H:i', strtotime($req['reviewed_at'])) ?>
+        <p style="font-size:11px;color:var(--dim);margin-top:4px;">
+            Reviewed on <?= date('M j, Y H:i', strtotime($req['reviewed_at'])) ?>
+        </p>
         <?php endif; ?>
     </div>
     <?php endif; ?>

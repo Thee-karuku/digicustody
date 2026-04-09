@@ -178,7 +178,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         ? $collection_date.' '.$collection_time.':00'
         : date('Y-m-d H:i:s');
 
-    // Merge all COC notes into collection_notes field
+    // Keep collection_notes for free-form notes, but store structured data in individual columns
+    $structured_notes = '';
+    if ($condition_on_receipt) $structured_notes .= "Condition: $condition_on_receipt\n";
+    if ($packaging_type) $structured_notes .= "Packaging: $packaging_type\n";
+    if ($seal_number) $structured_notes .= "Seal: $seal_number\n";
+    if ($acquisition_method) $structured_notes .= "Acquisition: $acquisition_method\n";
+    if ($device_make_model) $structured_notes .= "Device: $device_make_model\n";
+    if ($os_detected) $structured_notes .= "OS: $os_detected\n";
+    if ($chain_of_custody_notes) $structured_notes .= "COC: $chain_of_custody_notes\n";
+    if ($legal_basis) $structured_notes .= "Legal: $legal_basis\n";
+    if ($warrant_number) $structured_notes .= "Warrant: $warrant_number\n";
+    if ($issuing_court) $structured_notes .= "Court: $issuing_court\n";
+    if ($ob_number) $structured_notes .= "OB: $ob_number\n";
+    if ($gps_lat && $gps_lon) $structured_notes .= "GPS: $gps_lat, $gps_lon\n";
+    if ($scene_temp) $structured_notes .= "Temp: ${scene_temp}°C\n";
+    if ($scene_weather) $structured_notes .= "Weather: $scene_weather\n";
+    if ($relinquished_by) $structured_notes .= "Relinquished: $relinquished_by";
+    if ($relinquished_by_role) $structured_notes .= " ($relinquished_by_role)";
+    if ($relinquished_by) $structured_notes .= "\n";
+    if ($relinquished_dt) $structured_notes .= "Relinquished at: $relinquished_dt\n";
+    if ($relinquished_loc) $structured_notes .= "Relinquished loc: $relinquished_loc\n";
+    if ($received_by) $structured_notes .= "Received by: $received_by\n";
+    if ($received_dt) $structured_notes .= "Received at: $received_dt\n";
+    if ($transport_method) $structured_notes .= "Transport: $transport_method\n";
+    if ($transport_dt) $structured_notes .= "Transport date: $transport_dt\n";
+    if ($storage_location) $structured_notes .= "Storage: $storage_location\n";
+    if ($storage_conditions) $structured_notes .= "Storage conditions: $storage_conditions\n";
+    if ($photo_ref) $structured_notes .= "Photo ref: $photo_ref\n";
+    if ($collector_unit) $structured_notes .= "Unit: $collector_unit\n";
+    if ($collector_contact) $structured_notes .= "Contact: $collector_contact\n";
+    if ($collection_notes) $structured_notes .= "Notes: $collection_notes\n";
+    if ($ip_address) $structured_notes .= "IP: $ip_address\n";
+    if ($mac_address) $structured_notes .= "MAC: $mac_address\n";
+    if ($network_ssid) $structured_notes .= "SSID: $network_ssid\n";
+    if ($hostname) $structured_notes .= "Hostname: $hostname\n";
+    
+    // Legacy concatenated notes (for backwards compatibility)
+    $full_coc_notes = "";
+    if ($collected_by_name)    $full_coc_notes .= "Collected by: $collected_by_name\n";
     $full_coc_notes = "";
     if ($collected_by_name)    $full_coc_notes .= "Collected by: $collected_by_name\n";
     if ($collector_badge)      $full_coc_notes .= "Badge/ID: $collector_badge\n";
@@ -248,17 +286,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     if ($collection_address) $full_location .= ($full_location ? ', ' : '') . $collection_address;
 
     $pdo->prepare("INSERT INTO evidence
-        (evidence_number,case_id,title,description,evidence_type,file_name,file_path,
+        (evidence_number,case_id,title,description,evidence_type,acquisition_method,file_name,file_path,
          file_size,mime_type,sha256_hash,md5_hash,collection_date,collection_location,
-         collection_notes,current_custodian,status,uploaded_by)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'collected',?)")
+         collection_notes,collector_badge,tools_used,write_blocker_used,device_serial,device_type,
+         device_make_model,os_detected,seal_number,condition_on_receipt,
+         witness_name,witness_badge,witness2_name,witness2_badge,
+         gps_lat,gps_lon,current_custodian,status,uploaded_by)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'collected',?)")
         ->execute([
             $ev_number, $case_id, $title, $description, $evidence_type,
-            $upload['filename'], $upload['filepath'],
+            $acquisition_method, $upload['filename'], $upload['filepath'],
             $upload['file_size'], $upload['mime_type'],
             $upload['sha256'], $upload['md5'],
             $collection_datetime, $full_location,
-            trim($full_coc_notes), $uid, $uid
+            trim($structured_notes), $collector_badge, $tools_used, ($write_blocker_used ? 1 : 0), $device_serial, $device_type, $device_make_model, $os_detected, $seal_number, $condition_on_receipt, $witness_name, $witness_badge, $witness2_name, $witness2_badge, $gps_lat, $gps_lon, $uid, $uid
         ]);
     $ev_id = $pdo->lastInsertId();
 

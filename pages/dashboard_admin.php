@@ -80,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['req_action'])) {
                 send_notification($pdo,$new_uid,'Account Approved',
                     "Your account has been approved. Username: $username | Temp Password: $temp_pass",'success');
                 audit_log($pdo,$_SESSION['user_id'],$_SESSION['username'],'admin','account_request_approved','account_request',$req_id,$req['full_name'],"Request approved, account created: $username");
+                send_account_approval_email($req['email'], $req['full_name'], $username, $temp_pass, $req['requested_role']);
             }
         } else {
             audit_log($pdo,$_SESSION['user_id'],$_SESSION['username'],'admin','account_request_rejected','account_request',$req_id,'','Request rejected');
@@ -235,7 +236,7 @@ $msg = $_GET['msg'] ?? '';
 
             <p style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;">Users by Role</p>
             <?php
-            $role_colors = ['admin'=>'gold','investigator'=>'blue','analyst'=>'green','viewer'=>'gray'];
+            $role_colors = ['admin'=>'gold','investigator'=>'blue','analyst'=>'green'];
             foreach ($users_by_role as $r): $c=$role_colors[$r['role']]??'gray'; ?>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                 <span class="badge badge-<?= $c ?>"><?= ucfirst(e($r['role'])) ?></span>
@@ -293,7 +294,7 @@ $msg = $_GET['msg'] ?? '';
                     <div>
                         <p class="req-name"><?= e($req['full_name']) ?></p>
                         <p class="req-detail"><?= e($req['email']) ?> &nbsp;·&nbsp;
-                            <span class="badge badge-<?= ['investigator'=>'blue','analyst'=>'green','viewer'=>'gray'][$req['requested_role']]??'gray' ?>"><?= ucfirst(e($req['requested_role'])) ?></span>
+                            <span class="badge badge-<?= ['investigator'=>'blue','analyst'=>'green'][$req['requested_role']]??'gray' ?>"><?= ucfirst(e($req['requested_role'])) ?></span>
                         </p>
                         <?php if($req['department']): ?><p class="req-detail"><?= e($req['department']) ?></p><?php endif; ?>
                         <p class="req-detail" style="margin-top:4px;font-size:11.5px;color:var(--dim)"><?= time_ago($req['created_at']) ?></p>

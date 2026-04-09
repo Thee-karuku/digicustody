@@ -27,6 +27,15 @@ $stmt->execute([$id]);
 $case = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$case) { header('Location: cases.php?error=not_found'); exit; }
 
+// Access control: investigators/admins see all, analysts only see assigned cases
+if ($role === 'analyst') {
+    $has_access = can_see_case($pdo, $id, $uid, $role);
+    if (!$has_access) {
+        header('Location: cases.php?error=access_denied');
+        exit;
+    }
+}
+
 // Log view
 audit_log($pdo,$uid,$_SESSION['username'],$role,'case_updated','case',$id,
     $case['case_number'],"Case viewed: {$case['case_number']}",$_SERVER['REMOTE_ADDR']??'');
@@ -41,6 +50,53 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['update_status']) && $ro
         audit_log($pdo,$uid,$_SESSION['username'],$role,'case_updated','case',$id,
             $case['case_number'],"Case status updated to: $new_status");
     }
+}
+
+// Handle analyst assignment (admin only)
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['assign_analyst']) && $role==='admin') {
+    if (verify_csrf($_POST['csrf_token']??'')) {
+        $analyst_id = (int)($_POST['analyst_id'] ?? 0);
+        if ($analyst_id > 0) {
+            // Check if user is actually an analyst
+            $chk = $pdo->prepare("SELECT full_name FROM users WHERE id=? AND role='analyst'");
+            $chk->execute([$analyst_id]);
+            $analyst = $chk->fetch();
+            if ($analyst) {
+                // Update assigned_analyst
+                $pdo->prepare("UPDATE cases SET assigned_analyst=?,updated_at=NOW() WHERE id=?")->execute([$analyst_id,$id]);
+                $case['assigned_analyst'] = $analyst_id;
+                // Grant case_access to analyst
+                grant_case_access($pdo, $id, $analyst_id, $uid);
+                send_notification($pdo, $analyst_id, 'Case Assignment',
+                    "You have been assigned to case {$case['case_number']}: {$case['case_title']}", 'info', 'case', $id);
+                audit_log($pdo,$uid,$_SESSION['username'],$role,'case_updated','case',$id,
+                    $case['case_number'],"Assigned analyst: {$analyst['full_name']}");
+            }
+        } elseif ($analyst_id === 0 && isset($_POST['remove_analyst'])) {
+            // Remove analyst assignment
+            $old_analyst = $case['assigned_analyst'];
+            if ($old_analyst) {
+                $pdo->prepare("UPDATE cases SET assigned_analyst=NULL,updated_at=NOW() WHERE id=?")->execute([$id]);
+                $case['assigned_analyst'] = null;
+                revoke_case_access($pdo, $id, $old_analyst);
+                audit_log($pdo,$uid,$_SESSION['username'],$role,'case_updated','case',$id,
+                    $case['case_number'],"Removed analyst assignment");
+            }
+        }
+    }
+}
+
+// Fetch analysts for dropdown
+$analysts_stmt = $pdo->prepare("SELECT id, full_name, email FROM users WHERE role='analyst' ORDER BY full_name");
+$analysts_stmt->execute();
+$analysts = $analysts_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get currently assigned analyst info
+$assigned_analyst_info = null;
+if ($case['assigned_analyst']) {
+    $stmt = $pdo->prepare("SELECT id, full_name, email FROM users WHERE id=?");
+    $stmt->execute([$case['assigned_analyst']]);
+    $assigned_analyst_info = $stmt->fetch();
 }
 
 // All evidence for this case
@@ -184,23 +240,48 @@ $csrf = csrf_token();
                 <?php if ($case['updated_at'] !== $case['created_at']): ?>
                 <span class="meta-item"><i class="fas fa-clock"></i>Updated <?= time_ago($case['updated_at']) ?></span>
                 <?php endif; ?>
+                <?php if ($assigned_analyst_info): ?>
+                <span class="meta-item"><i class="fas fa-user-check" style="color:var(--success)"></i>Analyst: <?= e($assigned_analyst_info['full_name']) ?></span>
+                <?php elseif ($role === 'admin'): ?>
+                <span class="meta-item"><i class="fas fa-user-clock" style="color:var(--warning)"></i>No analyst assigned</span>
+                <?php endif; ?>
             </div>
         </div>
 
-        <!-- Admin: quick status update -->
+        <!-- Admin: quick status update & analyst assignment -->
         <?php if ($role === 'admin'): ?>
-        <form method="POST" style="display:flex;align-items:center;gap:8px;">
-            <input type="hidden" name="csrf_token"    value="<?= $csrf ?>">
-            <input type="hidden" name="update_status" value="1">
-            <select name="status" class="status-select" onchange="this.form.submit()">
-                <?php foreach(['open','under_investigation','closed','archived'] as $s): ?>
-                <option value="<?= $s ?>" <?= $case['status']===$s?'selected':'' ?>>
-                    <?= ucwords(str_replace('_',' ',$s)) ?>
-                </option>
-                <?php endforeach; ?>
-            </select>
-            <span style="font-size:12px;color:var(--dim)">Change status</span>
-        </form>
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
+            <form method="POST" style="display:flex;align-items:center;gap:8px;">
+                <input type="hidden" name="csrf_token"    value="<?= $csrf ?>">
+                <input type="hidden" name="update_status" value="1">
+                <select name="status" class="status-select" onchange="this.form.submit()">
+                    <?php foreach(['open','under_investigation','closed','archived'] as $s): ?>
+                    <option value="<?= $s ?>" <?= $case['status']===$s?'selected':'' ?>>
+                        <?= ucwords(str_replace('_',' ',$s)) ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <span style="font-size:12px;color:var(--dim)">Status</span>
+            </form>
+            <form method="POST" style="display:flex;align-items:center;gap:8px;">
+                <input type="hidden" name="csrf_token"      value="<?= $csrf ?>">
+                <input type="hidden" name="assign_analyst" value="1">
+                <select name="analyst_id" class="status-select" style="flex:1;">
+                    <option value="0">-- Remove Analyst --</option>
+                    <?php foreach($analysts as $a): ?>
+                    <option value="<?= $a['id'] ?>" <?= $case['assigned_analyst']==$a['id']?'selected':'' ?>>
+                        <?= e($a['full_name']) ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <?php if ($case['assigned_analyst']): ?>
+                <button type="submit" name="remove_analyst" value="1" class="btn btn-outline btn-sm" title="Remove">
+                    <i class="fas fa-xmark"></i>
+                </button>
+                <?php endif; ?>
+                <button type="submit" class="btn btn-gold btn-sm"><i class="fas fa-user-check"></i></button>
+            </form>
+        </div>
         <?php endif; ?>
     </div>
 

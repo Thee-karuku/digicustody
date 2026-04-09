@@ -4,13 +4,13 @@
  * Save to: /var/www/html/digicustody/includes/sidebar.php
  */
 $current_page = basename($_SERVER['PHP_SELF'], '.php');
-$role         = $_SESSION['role'] ?? 'viewer';
+$role         = $_SESSION['role'] ?? 'analyst';
 $in_pages     = strpos($_SERVER['PHP_SELF'], '/pages/') !== false;
 $base         = $in_pages ? '../' : '';
 
 $nav_items = [
-    'dashboard' => ['icon'=>'fa-gauge-high',  'label'=>'Dashboard',        'roles'=>['admin','investigator','analyst','viewer'], 'href'=>$base.'dashboard.php'],
-    'evidence'  => ['icon'=>'fa-database',     'label'=>'Evidence',         'roles'=>['admin','investigator','analyst','viewer'], 'href'=>$base.'pages/evidence.php'],
+    'dashboard' => ['icon'=>'fa-gauge-high',  'label'=>'Dashboard',        'roles'=>['admin','investigator','analyst'], 'href'=>$base.'dashboard.php'],
+    'evidence'  => ['icon'=>'fa-database',     'label'=>'Evidence',         'roles'=>['admin','investigator','analyst'], 'href'=>$base.'pages/evidence.php'],
     'cases'     => ['icon'=>'fa-folder-open',  'label'=>'Cases',            'roles'=>['admin','investigator','analyst'],          'href'=>$base.'pages/cases.php'],
     'reports'   => ['icon'=>'fa-file-lines',   'label'=>'Analysis Reports', 'roles'=>['admin','investigator','analyst'],          'href'=>$base.'pages/reports.php'],
     'downloads' => ['icon'=>'fa-download',     'label'=>'Downloads',        'roles'=>['admin','investigator','analyst'],          'href'=>$base.'pages/downloads.php'],

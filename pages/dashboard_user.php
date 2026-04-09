@@ -11,8 +11,60 @@ $role = $_SESSION['role'];
 $s = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE uploaded_by=?");
 $s->execute([$uid]); $my_evidence = (int)$s->fetchColumn();
 
-$total_evidence = (int)$pdo->query("SELECT COUNT(*) FROM evidence")->fetchColumn();
-$total_cases    = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status IN ('open','under_investigation')")->fetchColumn();
+// ── All evidence with chain of custody info ───────────────
+if ($role === 'analyst') {
+    $all_evidence = $pdo->prepare("
+        SELECT e.*,
+               u_up.full_name  AS uploader_name,
+               c.case_number,
+               c.case_title,
+               (SELECT COUNT(*) FROM audit_logs al
+                WHERE al.target_type='evidence' AND al.target_id=e.id) AS action_count,
+               (SELECT hv.integrity_status
+                FROM hash_verifications hv
+                WHERE hv.evidence_id=e.id
+                ORDER BY hv.verified_at DESC LIMIT 1) AS last_integrity,
+               (SELECT COUNT(*) FROM analysis_reports ar
+                WHERE ar.evidence_id=e.id) AS report_count
+        FROM evidence e
+        JOIN users u_up ON u_up.id = e.uploaded_by
+        JOIN cases c    ON c.id    = e.case_id
+        WHERE e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
+           OR e.case_id IN (SELECT id FROM cases WHERE assigned_analyst=?)
+           OR e.uploaded_by=?
+           OR e.current_custodian=?
+        ORDER BY e.uploaded_at DESC
+        LIMIT 50
+    ");
+    $all_evidence->execute([$uid, $uid, $uid, $uid]);
+    $all_evidence = $all_evidence->fetchAll(PDO::FETCH_ASSOC);
+    
+    $total_evidence = count($all_evidence);
+    $total_cases = (int)$pdo->query("SELECT COUNT(DISTINCT case_id) FROM evidence WHERE case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR case_id IN (SELECT id FROM cases WHERE assigned_analyst=$uid)")->fetchColumn();
+} else {
+    $all_evidence = $pdo->query("
+        SELECT e.*,
+               u_up.full_name  AS uploader_name,
+               c.case_number,
+               c.case_title,
+               (SELECT COUNT(*) FROM audit_logs al
+                WHERE al.target_type='evidence' AND al.target_id=e.id) AS action_count,
+               (SELECT hv.integrity_status
+                FROM hash_verifications hv
+                WHERE hv.evidence_id=e.id
+                ORDER BY hv.verified_at DESC LIMIT 1) AS last_integrity,
+               (SELECT COUNT(*) FROM analysis_reports ar
+                WHERE ar.evidence_id=e.id) AS report_count
+        FROM evidence e
+        JOIN users u_up ON u_up.id = e.uploaded_by
+        JOIN cases c    ON c.id    = e.case_id
+        ORDER BY e.uploaded_at DESC
+        LIMIT 50
+    ")->fetchAll(PDO::FETCH_ASSOC);
+    
+    $total_evidence = (int)$pdo->query("SELECT COUNT(*) FROM evidence")->fetchColumn();
+    $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status IN ('open','under_investigation')")->fetchColumn();
+}
 
 $s = $pdo->prepare("SELECT COUNT(*) FROM analysis_reports WHERE submitted_by=?");
 $s->execute([$uid]); $my_reports = (int)$s->fetchColumn();
@@ -60,6 +112,25 @@ $my_logs = $pdo->prepare("
 ");
 $my_logs->execute([$uid]);
 $my_logs = $my_logs->fetchAll(PDO::FETCH_ASSOC);
+
+// ── My assigned cases (for analysts) ───────────────────────
+$my_cases = [];
+$my_cases_count = 0;
+if ($role === 'analyst') {
+    $stmt = $pdo->prepare("
+        SELECT c.*, 
+               (SELECT COUNT(*) FROM evidence e WHERE e.case_id = c.id) AS evidence_count,
+               u.full_name AS creator_name
+        FROM cases c
+        JOIN users u ON u.id = c.created_by
+        WHERE c.assigned_analyst = ? OR c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id = ?)
+        ORDER BY c.updated_at DESC
+        LIMIT 10
+    ");
+    $stmt->execute([$uid, $uid]);
+    $my_cases = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $my_cases_count = count($my_cases);
+}
 
 // ── Integrity alerts ──────────────────────────────────────
 $integrity_alerts = $pdo->query("
@@ -147,6 +218,71 @@ $type_icons = [
 </div>
 <?php endif; ?>
 
+<!-- My Assigned Cases (Analysts Only) -->
+<?php if ($role === 'analyst' && !empty($my_cases)): ?>
+<div class="section-card" style="margin-bottom:20px;">
+    <div class="section-head">
+        <h2><i class="fas fa-folder-open"></i> My Assigned Cases</h2>
+        <a href="pages/cases.php" class="see-all">View all</a>
+    </div>
+    <div style="overflow-x:auto;">
+    <div class="table-responsive"><table class="dc-table">
+        <thead><tr>
+            <th>Case</th>
+            <th>Type</th>
+            <th>Priority</th>
+            <th>Status</th>
+            <th>Evidence</th>
+            <th>Updated</th>
+            <th>Action</th>
+        </tr></thead>
+        <tbody>
+        <?php foreach ($my_cases as $c):
+            $priority_colors = ['low'=>'gray','medium'=>'blue','high'=>'orange','critical'=>'red'];
+        ?>
+        <tr>
+            <td>
+                <a href="pages/case_view.php?id=<?= $c['id'] ?>" style="font-weight:600;font-size:12.5px;color:var(--gold);text-decoration:none">
+                    <?= e($c['case_number']) ?>
+                </a>
+                <p style="font-size:11px;color:var(--muted)"><?= e(substr($c['case_title'],0,30)) ?>...</p>
+            </td>
+            <td><span style="font-size:12px;color:var(--muted)"><?= e($c['case_type'] ?: '—') ?></span></td>
+            <td>
+                <span class="badge badge-<?= $priority_colors[$c['priority']] ?? 'gray' ?>">
+                    <?= ucfirst($c['priority']) ?>
+                </span>
+            </td>
+            <td><?= status_badge($c['status']) ?></td>
+            <td>
+                <span class="badge badge-blue">
+                    <i class="fas fa-database" style="font-size:9px"></i> <?= $c['evidence_count'] ?>
+                </span>
+            </td>
+            <td><span style="font-size:11.5px;color:var(--muted)"><?= time_ago($c['updated_at']) ?></span></td>
+            <td>
+                <a href="pages/case_view.php?id=<?= $c['id'] ?>" class="btn btn-outline btn-sm">
+                    <i class="fas fa-eye"></i> View
+                </a>
+            </td>
+        </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table></div>
+    </div>
+</div>
+<?php elseif ($role === 'analyst'): ?>
+<div class="section-card" style="margin-bottom:20px;">
+    <div class="section-head">
+        <h2><i class="fas fa-folder-open"></i> My Assigned Cases</h2>
+    </div>
+    <div class="empty-state">
+        <i class="fas fa-folder-open"></i>
+        <p>No cases assigned to you yet.</p>
+    </div>
+</div>
+<?php endif; ?>
+
 <!-- Stats -->
 <div class="stats-grid">
     <div class="stat-card gold">
@@ -160,9 +296,9 @@ $type_icons = [
     <div class="stat-card blue">
         <div class="stat-icon blue"><i class="fas fa-folder-open"></i></div>
         <div class="stat-body">
-            <p class="stat-label">Active Cases</p>
-            <p class="stat-value"><?= number_format($total_cases) ?></p>
-            <p class="stat-sub">Open &amp; under investigation</p>
+            <p class="stat-label"><?= $role === 'analyst' ? 'My Cases' : 'Active Cases' ?></p>
+            <p class="stat-value"><?= $role === 'analyst' ? $my_cases_count : number_format($total_cases) ?></p>
+            <p class="stat-sub"><?= $role === 'analyst' ? 'Assigned to you' : 'Open &amp; under investigation' ?></p>
         </div>
     </div>
     <div class="stat-card green">
@@ -256,9 +392,7 @@ $type_icons = [
                     <?php if (can_analyse()): ?>
                     <div style="display:flex;gap:3px;">
                         <a href="pages/reports.php?evidence_id=<?= $ev['id'] ?>" class="btn btn-gold btn-sm" style="flex:1;justify-content:center;" title="Report" onclick="event.stopPropagation()"><i class="fas fa-file-lines"></i> Report</a>
-                        <?php if (!is_viewer()): ?>
                         <a href="pages/coc_report.php?id=<?= $ev['id'] ?>" class="btn btn-coc btn-sm" style="flex:1;justify-content:center;" title="COC Report" onclick="event.stopPropagation()"><i class="fas fa-file-shield"></i> COC</a>
-                        <?php endif; ?>
                     </div>
                     <?php endif; ?>
                 </div>

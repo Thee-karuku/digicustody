@@ -8,6 +8,25 @@
 if (!defined('SESSION_TIMEOUT')) define('SESSION_TIMEOUT', 3600);
 if (!defined('LOGIN_MAX_ATTEMPTS')) define('LOGIN_MAX_ATTEMPTS', 5);
 
+// ── Password Generation ──────────────────────────────────────
+function generate_strong_password($length = 8) {
+    $lowercase = 'abcdefghijklmnopqrstuvwxyz';
+    $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    $numbers = '0123456789';
+    
+    $password = '';
+    $password .= $lowercase[random_int(0, strlen($lowercase) - 1)];
+    $password .= $uppercase[random_int(0, strlen($uppercase) - 1)];
+    $password .= $numbers[random_int(0, strlen($numbers) - 1)];
+    
+    $all = $lowercase . $uppercase . $numbers;
+    for ($i = 3; $i < 6; $i++) {
+        $password .= $all[random_int(0, strlen($all) - 1)];
+    }
+    
+    return str_shuffle($password);
+}
+
 // ── Security Headers ─────────────────────────────────────────
 function set_security_headers() {
     header('X-Frame-Options: SAMEORIGIN');
@@ -15,18 +34,38 @@ function set_security_headers() {
     header('X-XSS-Protection: 1; mode=block');
     header('X-Robots-Tag: noindex, nofollow');
     header('Referrer-Policy: strict-origin-when-cross-origin');
-    header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data:; connect-src 'self';");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdnjs.cloudflare.com https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:;");
     header_remove('X-Powered-By');
 }
 
 function set_secure_session_config() {
-    ini_set('session.cookie_httponly', 1);
-    ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 1 : 0);
-    ini_set('session.cookie_samesite', 'Lax');
-    ini_set('session.use_strict_mode', 0);
-    ini_set('session.cookie_lifetime', 0);
-    ini_set('session.gc_maxlifetime', SESSION_TIMEOUT);
-    ini_set('session.save_path', __DIR__ . '/../sessions');
+    if (session_status() === PHP_SESSION_NONE) {
+        // Secure cookie settings
+        ini_set('session.cookie_httponly', 1);
+        ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 1 : 0);
+        ini_set('session.cookie_samesite', 'Strict');
+        
+        // Session security
+        ini_set('session.use_strict_mode', 1);
+        ini_set('session.use_only_cookies', 1);
+        ini_set('session.use_trans_sid', 0);
+        ini_set('session.regenerate_id', 0);
+        
+        // Session timeout
+        ini_set('session.gc_maxlifetime', SESSION_TIMEOUT);
+        ini_set('session.cookie_lifetime', 0);
+        
+        // Session save path
+        $save_path = __DIR__ . '/../sessions';
+        if (!is_dir($save_path)) {
+            mkdir($save_path, 0700, true);
+        }
+        ini_set('session.save_path', $save_path);
+        
+        // Session garbage collection
+        ini_set('session.gc_probability', 1);
+        ini_set('session.gc_divisor', 100);
+    }
 }
 
 function secure_session_regenerate() {
@@ -163,10 +202,15 @@ function require_ajax() {
 }
 
 // ── Rate Limiting ─────────────────────────────────────────────
-define('LOGIN_MAX_ATTEMPTS', 5);
+if (!defined('LOGIN_MAX_ATTEMPTS')) define('LOGIN_MAX_ATTEMPTS', 5);
 define('LOGIN_LOCKOUT_SECS', 300);
 
 function record_login_attempt($pdo, $username, $ip, $successful = false) {
+// Automatic cleanup of old login attempts (call this on login)
+function cleanup_old_login_attempts($pdo) {
+    $pdo->exec("DELETE FROM login_attempts WHERE attempted_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+}
+
     try {
         $stmt = $pdo->prepare("INSERT INTO login_attempts (ip_address, username, successful) VALUES (?, ?, ?)");
         $stmt->execute([$ip, $username, $successful ? 1 : 0]);
@@ -230,7 +274,6 @@ function require_role($roles) {
 function is_admin()        { return isset($_SESSION['role']) && $_SESSION['role'] === 'admin'; }
 function is_investigator() { return isset($_SESSION['role']) && $_SESSION['role'] === 'investigator'; }
 function is_analyst()      { return isset($_SESSION['role']) && $_SESSION['role'] === 'analyst'; }
-function is_viewer()       { return isset($_SESSION['role']) && $_SESSION['role'] === 'viewer'; }
 
 // ── Role-based Capability Gates ──────────────────────────────
 // Admin & Investigator: full operational access
@@ -400,26 +443,87 @@ function verify_file_integrity($filepath, $original_sha256, $original_md5) {
 // ── Evidence Number Generator ────────────────────────────────
 function generate_evidence_number($pdo) {
     $year = date('Y');
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE YEAR(uploaded_at) = ?");
-    $stmt->execute([$year]);
-    $count = (int)$stmt->fetchColumn() + 1;
-    return 'EV-' . $year . '-' . str_pad($count, 5, '0', STR_PAD_LEFT);
+    $pdo->beginTransaction();
+    try {
+        // Lock the last evidence record for this year
+        $stmt = $pdo->prepare("
+            SELECT evidence_number FROM evidence 
+            WHERE YEAR(uploaded_at) = ? 
+            ORDER BY id DESC LIMIT 1 
+            FOR UPDATE
+        ");
+        $stmt->execute([$year]);
+        $last = $stmt->fetch();
+        
+        if ($last && preg_match('/EV-' . $year . '-(\d+)/', $last['evidence_number'], $m)) {
+            $count = (int)$m[1] + 1;
+        } else {
+            $count = 1;
+        }
+        
+        $number = 'EV-' . $year . '-' . str_pad($count, 5, '0', STR_PAD_LEFT);
+        $pdo->commit();
+        return $number;
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
 }
 
 function generate_case_number($pdo) {
     $year = date('Y');
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM cases WHERE YEAR(created_at) = ?");
-    $stmt->execute([$year]);
-    $count = (int)$stmt->fetchColumn() + 1;
-    return 'CASE-' . $year . '-' . str_pad($count, 4, '0', STR_PAD_LEFT);
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare("
+            SELECT case_number FROM cases 
+            WHERE YEAR(created_at) = ? 
+            ORDER BY id DESC LIMIT 1 
+            FOR UPDATE
+        ");
+        $stmt->execute([$year]);
+        $last = $stmt->fetch();
+        
+        if ($last && preg_match('/CASE-' . $year . '-(\d+)/', $last['case_number'], $m)) {
+            $count = (int)$m[1] + 1;
+        } else {
+            $count = 1;
+        }
+        
+        $number = 'CASE-' . $year . '-' . str_pad($count, 4, '0', STR_PAD_LEFT);
+        $pdo->commit();
+        return $number;
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
 }
 
 function generate_report_number($pdo) {
     $year = date('Y');
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM analysis_reports WHERE YEAR(created_at) = ?");
-    $stmt->execute([$year]);
-    $count = (int)$stmt->fetchColumn() + 1;
-    return 'RPT-' . $year . '-' . str_pad($count, 4, '0', STR_PAD_LEFT);
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare("
+            SELECT report_number FROM analysis_reports 
+            WHERE YEAR(created_at) = ? 
+            ORDER BY id DESC LIMIT 1 
+            FOR UPDATE
+        ");
+        $stmt->execute([$year]);
+        $last = $stmt->fetch();
+        
+        if ($last && preg_match('/RPT-' . $year . '-(\d+)/', $last['report_number'], $m)) {
+            $count = (int)$m[1] + 1;
+        } else {
+            $count = 1;
+        }
+        
+        $number = 'RPT-' . $year . '-' . str_pad($count, 4, '0', STR_PAD_LEFT);
+        $pdo->commit();
+        return $number;
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
 }
 
 // ── Download Token ────────────────────────────────────────────
@@ -533,7 +637,6 @@ function role_badge($role) {
         'admin'        => ['label' => 'Admin',        'color' => '#c9a84c', 'bg' => 'rgba(201,168,76,0.15)'],
         'investigator' => ['label' => 'Investigator',  'color' => '#4a9eff', 'bg' => 'rgba(74,158,255,0.15)'],
         'analyst'      => ['label' => 'Analyst',       'color' => '#3ecf8e', 'bg' => 'rgba(62,207,142,0.15)'],
-        'viewer'       => ['label' => 'Viewer',        'color' => '#8899aa', 'bg' => 'rgba(136,153,170,0.15)'],
     ];
     $r = $map[$role] ?? ['label' => ucfirst($role), 'color' => '#888', 'bg' => '#eee'];
     return "<span style=\"display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600;color:{$r['color']};background:{$r['bg']};\">{$r['label']}</span>";
@@ -664,9 +767,70 @@ function send_password_reset_email($email, $token) {
     return mail($email, $subject, $message, $headers);
 }
 
+function send_email_via_resend($to, $subject, $html, $from_email = 'onboarding@resend.dev', $from_name = 'DigiCustody') {
+    $api_key = defined('RESEND_API_KEY') ? RESEND_API_KEY : 're_gcGS4i57_7BXJz3Qoz4g8fRxyFLesqTTn';
+    
+    $data = [
+        'from' => "$from_name <$from_email>",
+        'to' => [$to],
+        'subject' => $subject,
+        'html' => $html
+    ];
+    
+    $ch = curl_init('https://api.resend.com/emails');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $api_key,
+        'Content-Type: application/json'
+    ]);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    return $http_code >= 200 && $http_code < 300;
+}
+
+function send_account_approval_email($email, $full_name, $username, $password, $role) {
+    $login_url = (defined('BASE_URL') ? BASE_URL : 'http://localhost:8000/') . "login.php";
+
+    $subject = "DigiCustody - Your Account Has Been Approved";
+    $html = "
+    <html>
+    <body style='font-family: Arial, sans-serif; background: #060d1a; color: #f0f4fa; padding: 20px;'>
+        <div style='max-width: 500px; margin: 0 auto; background: #0c1526; border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 32px;'>
+            <div style='text-align: center; margin-bottom: 24px;'>
+                <h1 style='color: #c9a84c; font-size: 28px; margin: 0;'>DigiCustody</h1>
+                <p style='color: #6b82a0; margin: 8px 0 0;'>Evidence Management Platform</p>
+            </div>
+            <h2 style='color: #3ecf8e; margin-bottom: 20px;'>✓ Account Approved!</h2>
+            <p>Hello <strong>{$full_name}</strong>,</p>
+            <p>Great news! Your account request has been approved. You now have access to the DigiCustody platform as a <strong>" . ucfirst($role) . "</strong>.</p>
+            <div style='background: rgba(201,168,76,0.1); border: 1px solid rgba(201,168,76,0.2); border-radius: 12px; padding: 20px; margin: 20px 0;'>
+                <h3 style='color: #c9a84c; margin: 0 0 16px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;'>Your Login Credentials</h3>
+                <p style='margin: 8px 0;'><strong style='color: #8899aa;'>Username:</strong> <code style='background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 6px; color: #f0f4fa;'>{$username}</code></p>
+                <p style='margin: 8px 0;'><strong style='color: #8899aa;'>Password:</strong> <code style='background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 6px; color: #f0f4fa;'>{$password}</code></p>
+            </div>
+            <p style='color: #ef4444; font-size: 13px; margin-bottom: 20px;'>⚠️ Please change your password after your first login.</p>
+            <a href='{$login_url}' style='display: inline-block; background: #c9a84c; color: #060d1a; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px;'>Login to DigiCustody</a>
+            <p style='color: #6b82a0; font-size: 12px; margin-top: 24px;'>If the button doesn't work, copy this link to your browser:<br><a href='{$login_url}' style='color: #c9a84c;'>{$login_url}</a></p>
+        </div>
+    </body>
+    </html>";
+
+    return send_email_via_resend($email, $subject, $html);
+}
+
 // ── Two-Factor Authentication ─────────────────────────────────
 function generate_2fa_secret() {
-    return bin2hex(random_bytes(16));
+    $base32_chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    $secret = '';
+    for ($i = 0; $i < 16; $i++) {
+        $secret .= $base32_chars[random_int(0, 31)];
+    }
+    return $secret;
 }
 
 function get_2fa_qrcode_url($email, $secret, $issuer = 'DigiCustody') {
@@ -758,6 +922,110 @@ function get_user_2fa_secret($pdo, $user_id) {
     return $result ? $result['two_factor_secret'] : null;
 }
 
+// ── Trusted Devices (Remember Me) ─────────────────────────────
+function generate_device_token() {
+    return bin2hex(random_bytes(32));
+}
+
+function hash_token($token) {
+    return hash('sha256', $token);
+}
+
+function create_trusted_device($pdo, $user_id, $days = 30) {
+    $token = generate_device_token();
+    $token_hash = hash_token($token);
+    $expires_at = date('Y-m-d H:i:s', strtotime("+{$days} days"));
+    $device_name = parse_user_agent($_SERVER['HTTP_USER_AGENT'] ?? '');
+    $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+    $user_agent = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
+    
+    $stmt = $pdo->prepare("INSERT INTO trusted_devices (user_id, token_hash, device_name, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?, ?)");
+    $stmt->execute([$user_id, $token_hash, $device_name, $ip, $user_agent, $expires_at]);
+    
+    return $token;
+}
+
+function validate_trusted_device($pdo, $user_id, $token) {
+    $token_hash = hash_token($token);
+    
+    $stmt = $pdo->prepare("SELECT * FROM trusted_devices WHERE user_id = ? AND token_hash = ? AND expires_at > NOW()");
+    $stmt->execute([$user_id, $token_hash]);
+    $device = $stmt->fetch();
+    
+    if ($device) {
+        $pdo->prepare("UPDATE trusted_devices SET last_used_at = NOW() WHERE id = ?")->execute([$device['id']]);
+        return true;
+    }
+    return false;
+}
+
+function get_user_trusted_devices($pdo, $user_id) {
+    $stmt = $pdo->prepare("SELECT id, device_name, ip_address, created_at, last_used_at, expires_at FROM trusted_devices WHERE user_id = ? ORDER BY last_used_at DESC");
+    $stmt->execute([$user_id]);
+    return $stmt->fetchAll();
+}
+
+function revoke_trusted_device($pdo, $device_id, $user_id) {
+    $stmt = $pdo->prepare("DELETE FROM trusted_devices WHERE id = ? AND user_id = ?");
+    $stmt->execute([$device_id, $user_id]);
+    return $stmt->rowCount() > 0;
+}
+
+function revoke_all_trusted_devices($pdo, $user_id) {
+    $stmt = $pdo->prepare("DELETE FROM trusted_devices WHERE user_id = ?");
+    $stmt->execute([$user_id]);
+}
+
+function parse_user_agent($ua) {
+    if (empty($ua)) return 'Unknown Device';
+    
+    $device = 'Unknown Device';
+    if (strpos($ua, 'Windows') !== false) $device = 'Windows PC';
+    elseif (strpos($ua, 'Macintosh') !== false) $device = 'Mac';
+    elseif (strpos($ua, 'Linux') !== false) $device = 'Linux PC';
+    elseif (strpos($ua, 'Android') !== false) {
+        preg_match('/Android\s([0-9.]+)/', $ua, $m);
+        $device = 'Android' . ($m ? ' (' . $m[1] . ')' : '');
+    }
+    elseif (strpos($ua, 'iPhone') !== false || strpos($ua, 'iPad') !== false) $device = 'iOS Device';
+    
+    if (strpos($ua, 'Chrome') !== false) $device .= ' - Chrome';
+    elseif (strpos($ua, 'Firefox') !== false) $device .= ' - Firefox';
+    elseif (strpos($ua, 'Safari') !== false && strpos($ua, 'Chrome') === false) $device .= ' - Safari';
+    elseif (strpos($ua, 'Edge') !== false) $device .= ' - Edge';
+    
+    return $device;
+}
+
+function set_trusted_device_cookie($token, $days = 30) {
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    setcookie('trusted_device', $token, [
+        'expires' => time() + ($days * 86400),
+        'path' => '/',
+        'domain' => '',
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
+}
+
+function get_trusted_device_token() {
+    return $_COOKIE['trusted_device'] ?? null;
+}
+
+function clear_trusted_device_cookie() {
+    setcookie('trusted_device', '', [
+        'expires' => time() - 3600,
+        'path' => '/'
+    ]);
+}
+
+function is_trusted_device_valid($pdo, $user_id) {
+    $token = get_trusted_device_token();
+    if (!$token) return false;
+    return validate_trusted_device($pdo, $user_id, $token);
+}
+
 // ── Security Hardening ────────────────────────────────────────
 function validate_integer($value, $min = null, $max = null) {
     if (!is_numeric($value) || (int)$value != $value) return false;
@@ -832,6 +1100,76 @@ function validate_evidence_access($pdo, $evidence_id, $user_id, $role) {
     if ($role === 'admin') return ['allowed' => true, 'evidence' => $evidence];
     if ((int)$evidence['current_custodian'] === $user_id) return ['allowed' => true, 'evidence' => $evidence];
     if ((int)$evidence['uploaded_by'] === $user_id) return ['allowed' => true, 'evidence' => $evidence];
-    if ($role === 'viewer') return ['allowed' => true, 'evidence' => $evidence];
     return ['allowed' => false, 'reason' => 'Access denied.'];
 }
+// ── System Settings ─────────────────────────────────────────
+function get_system_setting($pdo, $key, $default = null) {
+    $stmt = $pdo->prepare("SELECT setting_value FROM system_settings WHERE setting_key = ?");
+    $stmt->execute([$key]);
+    $result = $stmt->fetch();
+    return $result ? $result['setting_value'] : $default;
+}
+
+function set_system_setting($pdo, $key, $value) {
+    $stmt = $pdo->prepare("INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?) 
+                           ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+    return $stmt->execute([$key, $value]);
+}
+
+function is_mandatory_2fa_enabled($pdo) {
+    return get_system_setting($pdo, 'mandatory_2fa', '0') === '1';
+}
+
+// ── Password Strength Validation ─────────────────────────────
+function validate_password_strength($password) {
+    $errors = array();
+    
+    if (strlen($password) < 8) {
+        $errors[] = "Password must be at least 8 characters long";
+    }
+    if (strlen($password) > 128) {
+        $errors[] = "Password must not exceed 128 characters";
+    }
+    if (!preg_match('/[a-z]/', $password)) {
+        $errors[] = "Password must contain at least one lowercase letter";
+    }
+    if (!preg_match('/[A-Z]/', $password)) {
+        $errors[] = "Password must contain at least one uppercase letter";
+    }
+    if (!preg_match('/[0-9]/', $password)) {
+        $errors[] = "Password must contain at least one number";
+    }
+    if (!preg_match('/[!@#$%^&*()]/', $password)) {
+        $errors[] = "Password must contain at least one special character";
+    }
+    $common = array("password", "12345678", "qwerty", "abc123", "password123");
+    if (in_array(strtolower($password), $common)) {
+        $errors[] = "This is a commonly used password";
+    }
+    
+    return array(
+        'valid' => empty($errors),
+        'errors' => $errors,
+        'score' => calculate_password_score($password)
+    );
+}
+
+function calculate_password_score($password) {
+    $score = 0;
+    if (strlen($password) >= 8) $score += 20;
+    if (strlen($password) >= 12) $score += 10;
+    if (strlen($password) >= 16) $score += 10;
+    if (preg_match('/[a-z]/', $password)) $score += 15;
+    if (preg_match('/[A-Z]/', $password)) $score += 15;
+    if (preg_match('/[0-9]/', $password)) $score += 15;
+    if (preg_match('/[!@#$%^&*()]/', $password)) $score += 15;
+    return min(100, $score);
+}
+
+function get_password_strength_label($score) {
+    if ($score < 40) return array('label' => 'Weak', 'color' => '#ef4444');
+    if ($score < 60) return array('label' => 'Fair', 'color' => '#f59e0b');
+    if ($score < 80) return array('label' => 'Good', 'color' => '#22c55e');
+    return array('label' => 'Strong', 'color' => '#10b981');
+}
+

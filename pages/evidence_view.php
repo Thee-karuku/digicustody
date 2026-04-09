@@ -45,8 +45,8 @@ audit_log($pdo,$uid,$_SESSION['username'],$role,'evidence_viewed','evidence',$id
 // Full custody history from evidence_transfers table
 $transfers = $pdo->prepare("
     SELECT et.*,
-           u_from.full_name AS from_name, u_from.role AS from_role,
-           u_to.full_name   AS to_name,   u_to.role   AS to_role,
+           u_from.username AS from_username, u_from.full_name AS from_name, u_from.role AS from_role, u_from.email AS from_email,
+           u_to.username   AS to_username,   u_to.full_name   AS to_name,   u_to.role   AS to_role,   u_to.email   AS to_email,
            u_acc.full_name  AS accepted_by_name
     FROM evidence_transfers et
     JOIN users u_from ON u_from.id = et.from_user
@@ -208,20 +208,16 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
-        <?php if(!is_viewer()): ?>
         <a href="evidence_download.php?id=<?= $id ?>" class="btn btn-download"><i class="fas fa-download"></i> Download</a>
-        <?php endif; ?>
         <?php if(can_write()): ?>
         <a href="evidence_transfer.php?id=<?= $id ?>" class="btn btn-outline"><i class="fas fa-right-left"></i> Transfer</a>
         <?php endif; ?>
-        <?php if(!is_viewer()): ?>
         <a href="evidence_verify.php?id=<?= $id ?>" class="btn btn-outline">
             <i class="fas fa-fingerprint"></i> Verify Integrity
         </a>
         <a href="coc_report.php?id=<?= $id ?>" class="btn btn-coc">
             <i class="fas fa-file-lines"></i> COC Report
         </a>
-        <?php endif; ?>
     </div>
 </div>
 
@@ -330,6 +326,17 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
 
     <!-- Chain of Custody -->
     <div class="tab-panel" id="tab-custody">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <div>
+                <h3 style="margin:0 0 4px 0;font-size:14px;color:var(--gold);">Chain of Custody Trail</h3>
+                <p style="margin:0;font-size:12px;color:var(--muted);">
+                    <?= count($transfers) + 1 ?> custody event(s) recorded
+                </p>
+            </div>
+            <a href="coc_report.php?id=<?= $id ?>" target="_blank" class="btn btn-outline btn-sm">
+                <i class="fas fa-file-lines"></i> Full COC Report
+            </a>
+        </div>
         <div class="coc-timeline">
             <!-- Initial collection -->
             <div class="coc-item">
@@ -340,8 +347,20 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
                         By: <strong style="color:var(--text)"><?= e($ev['uploader_name']) ?></strong> <?= role_badge($ev['uploader_role']) ?>
                         &nbsp;·&nbsp; <?= date('M j, Y H:i:s',strtotime($ev['uploaded_at'])) ?>
                     </p>
+                    <?php if($ev['collector_badge']): ?>
+                    <p class="coc-meta" style="color:var(--gold)"><i class="fas fa-id-badge"></i> Badge: <?= e($ev['collector_badge']) ?></p>
+                    <?php endif; ?>
                     <?php if($ev['collection_location']): ?>
                     <p class="coc-reason"><i class="fas fa-location-dot"></i> <?= e($ev['collection_location']) ?></p>
+                    <?php endif; ?>
+                    <?php if($ev['tools_used']): ?>
+                    <p class="coc-reason" style="color:var(--muted)"><i class="fas fa-screwdriver-wrench"></i> Tools: <?= e($ev['tools_used']) ?></p>
+                    <?php endif; ?>
+                    <?php if($ev['write_blocker_used']): ?>
+                    <p class="coc-reason" style="color:var(--success)"><i class="fas fa-shield-halved"></i> Write blocker used</p>
+                    <?php endif; ?>
+                    <?php if($ev['witness_name']): ?>
+                    <p class="coc-reason" style="color:var(--muted)"><i class="fas fa-user-eye"></i> Witness: <?= e($ev['witness_name']) ?><?php if($ev['witness_badge']): ?> (<?= e($ev['witness_badge']) ?>)<?php endif; ?></p>
                     <?php endif; ?>
                     <div style="margin-top:8px;background:var(--surface2);border-radius:7px;padding:8px 12px;">
                         <p style="font-size:11px;color:var(--muted);margin-bottom:4px">SHA-256 at upload:</p>
@@ -386,9 +405,14 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
                     </p>
                     <?php endif; ?>
                     <?php if($t['hash_verified'] && $t['hash_at_transfer']): ?>
-                    <div style="margin-top:6px;background:var(--surface2);border-radius:6px;padding:6px 10px;">
-                        <p style="font-size:10px;color:var(--muted);margin-bottom:2px">SHA-256 at transfer:</p>
-                        <p style="font-family:'Courier New',monospace;font-size:10px;color:var(--text)"><?= e(substr($t['hash_at_transfer'], 0, 40)) ?>…</p>
+                    <div style="margin-top:8px;background:var(--surface2);border-radius:6px;padding:8px 10px;">
+                        <p style="font-size:10px;color:var(--success);margin-bottom:4px"><i class="fas fa-shield-halved"></i> Integrity Verified at Transfer</p>
+                        <p style="font-size:10px;color:var(--muted);margin-bottom:2px">SHA-256:</p>
+                        <p style="font-family:'Courier New',monospace;font-size:9px;color:var(--text);word-break:break-all"><?= e($t['hash_at_transfer']) ?></p>
+                    </div>
+                    <?php elseif($t['status'] === 'accepted'): ?>
+                    <div style="margin-top:8px;background:rgba(248,113,113,0.1);border-radius:6px;padding:6px 10px;border:1px solid rgba(248,113,113,0.2);">
+                        <p style="font-size:10px;color:var(--danger)"><i class="fas fa-triangle-exclamation"></i> Hash verification skipped at transfer</p>
                     </div>
                     <?php endif; ?>
                     <?php if($t['status'] === 'pending' && (int)$t['to_user'] === $uid): ?>
@@ -401,7 +425,40 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
             </div>
             <?php endforeach; ?>
 
-            <!-- Current holder -->
+            <!-- Current Custodian -->
+            <div class="coc-item" style="border-left:2px dashed var(--gold);">
+                <div class="coc-dot upload" style="background:var(--gold);border-color:var(--gold);color:#000;"><i class="fas fa-user-shield"></i></div>
+                <div class="coc-body">
+                    <p class="coc-title">Current Custodian</p>
+                    <p class="coc-meta">
+                        <strong style="color:var(--gold)"><?= e($ev['custodian_name']) ?></strong> <?= role_badge($ev['custodian_role']) ?>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Integrity Summary -->
+            <div style="margin-top:20px;padding:15px;background:var(--surface2);border-radius:10px;">
+                <h4 style="margin:0 0 12px 0;font-size:13px;color:var(--gold);">Integrity Summary</h4>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:15px;">
+                    <div style="text-align:center;">
+                        <p style="font-size:20px;font-weight:bold;color:var(--text);margin:0;"><?= $ev['is_verified'] ? '<span style="color:var(--success)"><i class="fas fa-check-circle"></i></span>' : '<span style="color:var(--danger)"><i class="fas fa-times-circle"></i></span>' ?></p>
+                        <p style="font-size:11px;color:var(--muted);margin:4px 0 0 0;">File Verified</p>
+                    </div>
+                    <div style="text-align:center;">
+                        <p style="font-size:20px;font-weight:bold;color:var(--text);margin:0;"><?= count($transfers) ?></p>
+                        <p style="font-size:11px;color:var(--muted);margin:4px 0 0 0;">Transfers</p>
+                    </div>
+                    <div style="text-align:center;">
+                        <p style="font-size:20px;font-weight:bold;color:var(--text);margin:0;"><?= count(array_filter($transfers, fn($t) => $t['hash_verified'])) ?></p>
+                        <p style="font-size:11px;color:var(--muted);margin:4px 0 0 0;">Verified Transfers</p>
+                    </div>
+                </div>
+                <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+                    <p style="font-size:10px;color:var(--muted);margin:0;">Original SHA-256:</p>
+                    <p style="font-family:'Courier New',monospace;font-size:9px;color:var(--text);margin:4px 0 0 0;word-break:break-all;"><?= e($ev['sha256_hash']) ?></p>
+                </div>
+            </div>
+        </div>
             <div class="coc-item">
                 <div class="coc-dot current"><i class="fas fa-shield-halved"></i></div>
                 <div class="coc-body">
@@ -416,7 +473,7 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
     <div class="tab-panel" id="tab-integrity">
         <?php if(empty($verifications)): ?>
         <div class="empty-state"><i class="fas fa-fingerprint"></i><p>No integrity checks performed yet.</p>
-        <?php if(!is_viewer()): ?><form method="POST" style="margin-top:14px"><input type="hidden" name="action" value="verify_integrity"><button type="submit" class="btn btn-gold"><i class="fas fa-fingerprint"></i> Run First Check</button></form><?php endif ?>
+        <form method="POST" style="margin-top:14px"><input type="hidden" name="action" value="verify_integrity"><button type="submit" class="btn btn-gold"><i class="fas fa-fingerprint"></i> Run First Check</button></form>
         </div>
         <?php else: ?>
         <div style="padding:10px 0;">

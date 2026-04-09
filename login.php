@@ -6,6 +6,7 @@ set_secure_session_config();
 session_start();
 set_security_headers();
 
+cleanup_old_login_attempts($pdo);
 if (isset($_SESSION['user_id'])) { header('Location: dashboard.php'); exit; }
 
 $error = $req_error = $req_success = '';
@@ -36,10 +37,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
                 if ($user && password_verify($password, $user['password'])) {
                     record_login_attempt($pdo, $username, $ip, true);
                     
+                    // Check if mandatory 2FA is enabled system-wide
+                    $mandatory_2fa = is_mandatory_2fa_enabled($pdo);
+                    
                     // Check if 2FA is enabled
                     if ($user['two_factor_enabled'] == 1) {
+                        // Check if user has a valid trusted device cookie
+                        $trusted = is_trusted_device_valid($pdo, $user['id']);
+                        if ($trusted) {
+                            // Skip 2FA for trusted device
+                            secure_session_regenerate();
+                            $_SESSION['user_id']       = $user['id'];
+                            $_SESSION['username']      = $user['username'];
+                            $_SESSION['full_name']     = $user['full_name'];
+                            $_SESSION['role']          = $user['role'];
+                            $_SESSION['email']         = $user['email'];
+                            $_SESSION['last_activity'] = time();
+                            $_SESSION['2fa_verified']  = true;
+                            $pdo->prepare("UPDATE users SET last_login=NOW() WHERE id=?")->execute([$user['id']]);
+                            audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'Login via trusted device (2FA skipped)',$ip,$_SERVER['HTTP_USER_AGENT']??'');
+                            header('Location: dashboard.php'); exit;
+                        }
                         $_SESSION['pending_2fa_user'] = $user['id'];
                         header('Location: verify_2fa.php'); exit;
+                    }
+                    
+                    // If mandatory 2FA is enabled and user hasn't set it up, force setup
+                    if ($mandatory_2fa && $user['two_factor_enabled'] != 1) {
+                        $_SESSION['pending_2fa_setup'] = $user['id'];
+                        header('Location: setup_2fa_required.php'); exit;
                     }
                     
                     secure_session_regenerate();
@@ -80,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reque
     $phone      = trim($_POST['req_phone'] ?? '');
     $department = trim($_POST['req_department'] ?? '');
     $badge      = trim($_POST['req_badge'] ?? '');
-    $role       = in_array($_POST['req_role']??'',['investigator','analyst','viewer']) ? $_POST['req_role'] : 'viewer';
+    $role       = in_array($_POST['req_role']??'',['investigator','analyst']) ? $_POST['req_role'] : 'analyst';
     $reason     = trim($_POST['req_reason'] ?? '');
     if (empty($full_name)||empty($email)||empty($reason)) {
         $req_error = 'Full name, email, and reason are required.';
@@ -227,14 +253,14 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
         <label>Username or Email</label>
         <div class="iw">
           <i class="fas fa-user ic"></i>
-          <input type="text" name="username" placeholder="Enter your username" value="<?= e($_POST['username']??'') ?>" autocomplete="username" required>
+          <input type="text" name="username" placeholder="Enter your username" value="<?= e($_POST['username']??'') ?>" autocomplete="off" required>
         </div>
       </div>
       <div class="fld">
         <label>Password</label>
         <div class="iw">
           <i class="fas fa-lock ic"></i>
-          <input type="password" name="password" id="pw" placeholder="Enter your password" autocomplete="current-password" required>
+          <input type="password" name="password" id="pw" placeholder="Enter your password" autocomplete="off" required>
           <button type="button" class="eye" onclick="togglePw()" tabindex="-1"><i class="fas fa-eye" id="ei"></i></button>
         </div>
       </div>
@@ -283,7 +309,6 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
             <select name="req_role" onchange="upRole(this.value)">
               <option value="investigator" <?= ($_POST['req_role']??'')==='investigator'?'selected':'' ?>>Investigator</option>
               <option value="analyst"      <?= ($_POST['req_role']??'')==='analyst'?'selected':'' ?>>Analyst</option>
-              <option value="viewer"       <?= ($_POST['req_role']??'')==='viewer'?'selected':'' ?>>Viewer (Read-only)</option>
             </select>
           </div>
         </div>
@@ -306,9 +331,9 @@ function togglePw(){const f=document.getElementById('pw'),i=document.getElementB
 function openM(){document.getElementById('ov').style.display='flex';}
 function closeM(){document.getElementById('ov').style.display='none';}
 function ovClose(e){if(e.target===document.getElementById('ov'))closeM();}
-const rh={investigator:'<strong>Investigator:</strong> Upload evidence, download files, verify file integrity, submit analysis reports, manage cases.',analyst:'<strong>Analyst:</strong> Same as Investigator — upload evidence, download files, verify integrity, submit analysis reports and manage cases.',viewer:'<strong>Viewer (Read-only):</strong> Can view evidence, cases, and reports only. Cannot upload, download or modify anything.'};
+const rh={investigator:'<strong>Investigator:</strong> Upload evidence, download files, verify file integrity, submit analysis reports, manage cases.',analyst:'<strong>Analyst:</strong> Same as Investigator — upload evidence, download files, verify integrity, submit analysis reports and manage cases.'};
 function upRole(v){document.getElementById('rh').innerHTML=rh[v]||'';}
-document.getElementById('lf').addEventListener('submit',()=>{document.getElementById('bl').style.display='none';document.getElementById('sp').style.display='block';});
+// Form submit handled normally
 <?php if($show_modal):?>openM();<?php endif;?>
 (function(){
   const c=document.getElementById('cv'),ctx=c.getContext('2d');

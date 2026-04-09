@@ -29,6 +29,42 @@ if (empty($user['backup_codes'])) {
 }
 
 $csrf = csrf_token();
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!verify_csrf($_POST['csrf_token'] ?? '')) {
+        $error = 'Invalid request.';
+    } else {
+        $code = trim($_POST['code'] ?? '');
+        
+        if (empty($user['backup_codes'])) {
+            $error = 'No backup codes available.';
+        } else {
+            $result = verify_backup_code($user['backup_codes'], $code);
+            if ($result['valid']) {
+                $pdo->prepare("UPDATE users SET backup_codes = ? WHERE id = ?")
+                    ->execute([json_encode($result['remaining_codes']), $user_id]);
+                
+                secure_session_regenerate();
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['username'] = $user['username'];
+                $_SESSION['full_name'] = $user['full_name'];
+                $_SESSION['role'] = $user['role'];
+                $_SESSION['email'] = $user['email'];
+                $_SESSION['last_activity'] = time();
+                $_SESSION['2fa_verified'] = true;
+                
+                unset($_SESSION['pending_2fa_user']);
+                
+                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa_backup', null, null, null, '2FA backup code used', $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+                
+                header('Location: dashboard.php');
+                exit;
+            } else {
+                $error = 'Invalid backup code.';
+            }
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
