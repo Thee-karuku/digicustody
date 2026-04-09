@@ -266,7 +266,25 @@ function si($col) {
 .dc-table th:nth-child(4){width:140px}
 .dc-table th:nth-child(5){width:100px}
 .dc-table th:nth-child(6){width:120px}
-.dc-table th:nth-child(7){width:180px}
+.dc-table th:nth-child(7){width:220px}
+.clickable-row:hover{background:rgba(201,168,76,0.05);}
+/* action buttons */
+.action-group{display:flex;gap:8px;align-items:center;justify-content:center;}
+.action-btn{width:auto;min-width:60px;height:36px;padding:0 10px;border-radius:10px;border:1px solid var(--border);background:linear-gradient(135deg,var(--surface2) 0%,rgba(201,168,76,0.05) 100%);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1);font-size:12px;position:relative;overflow:hidden;}
+.action-btn i{font-size:12px;}
+.action-btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,0.3);}
+.action-btn:active{transform:translateY(0);}
+.action-label{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.3px;}
+.action-edit{color:#60a5fa;}
+.action-edit:hover{border-color:#60a5fa;box-shadow:0 4px 12px rgba(96,165,250,0.3);}
+.action-suspend{color:#fbbf24;}
+.action-suspend:hover{border-color:#fbbf24;box-shadow:0 4px 12px rgba(251,191,36,0.3);}
+.action-activate{color:#34d399;}
+.action-activate:hover{border-color:#34d399;box-shadow:0 4px 12px rgba(52,211,153,0.3);}
+.action-reset{color:#a78bfa;}
+.action-reset:hover{border-color:#a78bfa;box-shadow:0 4px 12px rgba(167,139,250,0.3);}
+.action-delete{color:#f87171;}
+.action-delete:hover{border-color:#f87171;box-shadow:0 4px 12px rgba(248,113,113,0.3);}
 /* toast */
 .toast-container{position:fixed;top:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:10px;pointer-events:none;}
 .toast{pointer-events:auto;background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:16px 20px;min-width:320px;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,0.6);display:flex;align-items:flex-start;gap:12px;animation:toastIn .4s cubic-bezier(.22,.68,0,1.15) both;}
@@ -399,7 +417,7 @@ function si($col) {
             $ev_count->execute([$u['id']]);
             $ev_count = (int)$ev_count->fetchColumn();
         ?>
-        <tr>
+        <tr class="clickable-row" onclick="openEditModal(<?= htmlspecialchars(json_encode($u), ENT_QUOTES) ?>)" style="cursor:pointer;">
             <td data-label="User">
                 <div style="display:flex;align-items:center;gap:10px;">
                     <div class="user-avatar <?= $u['status']==='suspended'?'suspended':'' ?>">
@@ -439,21 +457,28 @@ function si($col) {
                 <?php endif; ?>
             </td>
             <td data-label="Actions">
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                    <button class="btn btn-outline btn-sm"
-                        onclick="openEditModal(<?= htmlspecialchars(json_encode($u), ENT_QUOTES) ?>)">
-                        <i class="fas fa-pen"></i> Edit
-                    </button>
+                <div class="action-group">
                     <?php if ($u['id'] !== $uid): ?>
-                    <button class="btn <?= $u['status']==='active'?'btn-danger':'btn-success' ?> btn-sm" onclick="openConfirmModal('toggle_status',<?= $u['id'] ?>,'<?= $u['status']==='active'?'Suspend':'Activate' ?>','<?= e(addslashes($u['full_name'])) ?>','<?= $u['status']==='active'?'Suspend':'Reactivate' ?> this user?')">
-                        <i class="fas <?= $u['status']==='active'?'fa-ban':'fa-circle-check' ?>"></i>
-                        <?= $u['status']==='active'?'Suspend':'Activate' ?>
+                    <?php if ($u['status']==='active'): ?>
+                    <button class="action-btn action-suspend" title="Suspend User"
+                        onclick="event.stopPropagation(); openConfirmModal('toggle_status',<?= $u['id'] ?>,'Suspend','<?= e(addslashes($u['full_name'])) ?>','Suspend this user?')">
+                        <i class="fas fa-ban"></i>
+                        <span class="action-label">Suspend</span>
                     </button>
-                    <button class="btn btn-outline btn-sm" onclick="openConfirmModal('reset_password',<?= $u['id'] ?>,'Reset Password','<?= e(addslashes($u['full_name'])) ?>','Reset password for this user? A temporary password will be generated.')">
-                        <i class="fas fa-key"></i> Reset PW
+                    <?php else: ?>
+                    <button class="action-btn action-activate" title="Activate User"
+                        onclick="event.stopPropagation(); openConfirmModal('toggle_status',<?= $u['id'] ?>,'Activate','<?= e(addslashes($u['full_name'])) ?>','Reactivate this user?')">
+                        <i class="fas fa-check"></i>
+                        <span class="action-label">Activate</span>
                     </button>
-                    <button class="btn btn-danger btn-sm" onclick="openDeleteModal(<?= $u['id'] ?>,'<?= e(addslashes($u['full_name'])) ?>')">
-                        <i class="fas fa-trash"></i> Delete
+                    <?php endif; ?>
+                    <button class="action-btn action-reset" title="Reset Password" onclick="event.stopPropagation(); openConfirmModal('reset_password',<?= $u['id'] ?>,'Reset Password','<?= e(addslashes($u['full_name'])) ?>','Reset password for this user? A temporary password will be generated.')">
+                        <i class="fas fa-key"></i>
+                        <span class="action-label">Reset</span>
+                    </button>
+                    <button class="action-btn action-delete" title="Delete User" onclick="openDeleteModal(<?= $u['id'] ?>,'<?= e(addslashes($u['full_name'])) ?>')">
+                        <i class="fas fa-trash-alt"></i>
+                        <span class="action-label">Delete</span>
                     </button>
                     <?php endif; ?>
                 </div>

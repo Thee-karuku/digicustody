@@ -206,17 +206,16 @@ if (!defined('LOGIN_MAX_ATTEMPTS')) define('LOGIN_MAX_ATTEMPTS', 5);
 define('LOGIN_LOCKOUT_SECS', 300);
 
 function record_login_attempt($pdo, $username, $ip, $successful = false) {
-// Automatic cleanup of old login attempts (call this on login)
-function cleanup_old_login_attempts($pdo) {
-    $pdo->exec("DELETE FROM login_attempts WHERE attempted_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)");
-}
-
     try {
         $stmt = $pdo->prepare("INSERT INTO login_attempts (ip_address, username, successful) VALUES (?, ?, ?)");
         $stmt->execute([$ip, $username, $successful ? 1 : 0]);
     } catch (Exception $e) {
         error_log("Failed to record login attempt: " . $e->getMessage());
     }
+}
+
+function cleanup_old_login_attempts($pdo) {
+    $pdo->exec("DELETE FROM login_attempts WHERE attempted_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)");
 }
 
 function get_failed_attempts($pdo, $username, $ip) {
