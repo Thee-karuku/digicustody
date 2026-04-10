@@ -47,15 +47,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['last_activity'] = time();
                 $_SESSION['2fa_verified'] = true;
                 
-                // Create trusted device if checkbox was checked
+                // Remember account for 30 days if checkbox was checked
                 if ($remember_device) {
-                    $token = create_trusted_device($pdo, $user['id'], 30);
-                    set_trusted_device_cookie($token, 30);
+                    $expires = date('Y-m-d H:i:s', strtotime('+30 days'));
+                    $pdo->prepare("UPDATE users SET skip_2fa_until = ? WHERE id = ?")->execute([$expires, $user['id']]);
                 }
                 
                 unset($_SESSION['pending_2fa_user']);
                 
-                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa', null, null, null, '2FA verification successful' . ($remember_device ? ' (trusted device created)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa', null, null, null, '2FA verification successful' . ($remember_device ? ' (account remembered for 30 days)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
                 
                 header('Location: dashboard.php');
                 exit;
@@ -79,15 +79,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['last_activity'] = time();
                 $_SESSION['2fa_verified'] = true;
                 
-                // Create trusted device if checkbox was checked
+                // Remember account for 30 days if checkbox was checked
                 if ($remember_device) {
-                    $token = create_trusted_device($pdo, $user['id'], 30);
-                    set_trusted_device_cookie($token, 30);
+                    $expires = date('Y-m-d H:i:s', strtotime('+30 days'));
+                    $pdo->prepare("UPDATE users SET skip_2fa_until = ? WHERE id = ?")->execute([$expires, $user['id']]);
                 }
                 
                 unset($_SESSION['pending_2fa_user']);
                 
-                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa_backup', null, null, null, '2FA backup code used' . ($remember_device ? ' (trusted device created)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa_backup', null, null, null, '2FA backup code used' . ($remember_device ? ' (account remembered for 30 days)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
                 
                 header('Location: dashboard.php');
                 exit;
@@ -170,7 +170,7 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
       </div>
       <label class="remember-me" style="display:flex;align-items:center;gap:8px;margin-bottom:18px;cursor:pointer;">
         <input type="checkbox" name="remember_device" value="1" style="width:auto;accent-color:var(--gold);">
-        <span style="font-size:13px;color:var(--muted);">Remember this device for 30 days</span>
+        <span style="font-size:13px;color:var(--muted);">Remember this account for 30 days</span>
       </label>
       <button type="submit" class="btn"><i class="fas fa-check"></i> Verify</button>
     </form>

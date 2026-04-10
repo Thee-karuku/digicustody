@@ -60,12 +60,12 @@ $dir  = strtoupper($_GET['dir']??'DESC')==='ASC' ? 'ASC' : 'DESC';
 
 $where = ['1=1']; $params = [];
 
-// Analysts only see cases they are assigned to or have access to
-// Investigators and Admins see all cases
+// Analysts only see cases via case_access
+// Investigators see all cases (no filter)
+// Admins see all cases
 if ($role === 'analyst') {
-    $where[] = "(c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
-                OR c.assigned_analyst=? OR c.created_by=?)";
-    $params = array_merge($params, [$uid, $uid, $uid]);
+    $where[] = "c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)";
+    $params[] = $uid;
 }
 
 if ($search !== '') {
@@ -87,24 +87,25 @@ $cases_stmt = $pdo->prepare("
 $cases_stmt->execute($params);
 $cases = $cases_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Stats — scoped to analyst only
+// Stats — scoped by role
 if (is_admin()) {
     $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases")->fetchColumn();
     $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='open'")->fetchColumn();
     $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='under_investigation'")->fetchColumn();
     $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='closed'")->fetchColumn();
 } elseif ($role === 'analyst') {
-    $cf = "WHERE id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR assigned_analyst=$uid OR created_by=$uid";
+    $cf = "WHERE id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid)";
     $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases $cf")->fetchColumn();
     $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='open'")->fetchColumn();
     $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='under_investigation'")->fetchColumn();
     $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='closed'")->fetchColumn();
 } else {
-    // Investigators see all cases
-    $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases")->fetchColumn();
-    $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='open'")->fetchColumn();
-    $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='under_investigation'")->fetchColumn();
-    $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status='closed'")->fetchColumn();
+    // Investigators see cases they created or have case_access
+    $cf = "WHERE created_by=$uid OR id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid)";
+    $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases $cf")->fetchColumn();
+    $open_cases  = (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='open'")->fetchColumn();
+    $active_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='under_investigation'")->fetchColumn();
+    $closed_cases= (int)$pdo->query("SELECT COUNT(*) FROM cases $cf AND status='closed'")->fetchColumn();
 }
 
 $csrf = csrf_token();
@@ -242,7 +243,15 @@ function ci($col){global $sort,$dir;if($sort!==$col)return '<i class="fas fa-sor
             <th>Actions</th>
         </tr></thead>
         <tbody>
-        <?php foreach ($cases as $c): ?>
+        <?php foreach ($cases as $c):
+            // Check if investigator has access to this case
+            $inv_has_access = false;
+            if ($role === 'investigator') {
+                $stmt = $pdo->prepare("SELECT 1 FROM case_access WHERE case_id=? AND user_id=?");
+                $stmt->execute([$c['id'], $uid]);
+                $inv_has_access = $stmt->fetchColumn() || (int)$c['created_by'] === (int)$uid;
+            }
+        ?>
         <tr>
             <td data-label="Case No."><a href="case_view.php?id=<?= $c['id'] ?>" style="font-weight:700;font-size:12.5px;color:var(--gold);font-family:'Space Grotesk',sans-serif;text-decoration:none;"><?= e($c['case_number']) ?></a></td>
             <td data-label="Title">
@@ -261,9 +270,15 @@ function ci($col){global $sort,$dir;if($sort!==$col)return '<i class="fas fa-sor
             <td data-label="Date"><span style="font-size:12px;color:var(--muted)"><?= date('M j, Y',strtotime($c['created_at'])) ?></span></td>
             <td data-label="Actions">
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <?php if ($role === 'investigator' && !$inv_has_access): ?>
+                    <a href="case_view.php?id=<?= $c['id'] ?>" class="btn btn-outline btn-sm" style="opacity:0.5;cursor:not-allowed;" title="Request access or contact an admin" onclick="event.preventDefault();alert('You do not have access to this case. Request access or contact an admin.');">
+                        <i class="fas fa-lock"></i> View Case
+                    </a>
+                    <?php else: ?>
                     <a href="case_view.php?id=<?= $c['id'] ?>" class="btn btn-outline btn-sm">
                         <i class="fas fa-eye"></i> View Case
                     </a>
+                    <?php endif; ?>
                     <a href="evidence.php?case=<?= $c['id'] ?>" class="btn btn-outline btn-sm">
                         <i class="fas fa-database"></i> Evidence
                     </a>

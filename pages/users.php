@@ -550,6 +550,7 @@ function si($col) {
                         <label>Password * (min 8 chars)</label>
                         <div class="pass-wrap">
                             <input type="password" name="password" id="createPw" placeholder="Set a strong password" minlength="8" required oninput="updateStrengthMeter(this.id, 'pwStrength', 'pwStrengthLabel')">
+                            <button type="button" class="btn btn-sm btn-outline" style="padding:4px 10px;font-size:11px;margin-bottom:4px;" onclick="generatePassword('createPw', 'pwStrength', 'pwStrengthLabel')"><i class="fas fa-wand-magic-sparkles"></i> Generate</button>
                             <div style="margin-top:6px;">
                                 <div style="height:4px;background:#2e4060;border-radius:2px;overflow:hidden;">
                                     <div id="pwStrength" style="height:100%;width:0%;background:#6b7280;transition:all .3s;"></div>
@@ -837,6 +838,33 @@ function checkPasswordStrength(password) {
     else if (score >= 40) { label = "Fair"; color = "#f59e0b"; }
     
     return { score, label, color };
+}
+
+function generatePassword(inputId, meterId, labelId) {
+    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()";
+    let password = "";
+    const length = 16;
+    
+    password += "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(Math.random() * 26)];
+    password += "abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 26)];
+    password += "0123456789"[Math.floor(Math.random() * 10)];
+    password += "!@#$%^&*()"[Math.floor(Math.random() * 10)];
+    
+    for (let i = 4; i < length; i++) {
+        password += chars[Math.floor(Math.random() * chars.length)];
+    }
+    
+    password = password.split('').sort(() => 0.5 - Math.random()).join('');
+    
+    const input = document.getElementById(inputId);
+    input.value = password;
+    updateStrengthMeter(inputId, meterId, labelId);
+    
+    const eyeBtn = input.nextElementSibling.nextElementSibling.nextElementSibling;
+    if (eyeBtn && eyeBtn.classList.contains('pass-eye')) {
+        input.type = "text";
+        eyeBtn.querySelector('i').className = "fas fa-eye-slash";
+    }
 }
 
 function updateStrengthMeter(inputId, meterId, labelId) {

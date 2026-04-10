@@ -42,10 +42,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
                     
                     // Check if 2FA is enabled
                     if ($user['two_factor_enabled'] == 1) {
-                        // Check if user has a valid trusted device cookie
-                        $trusted = is_trusted_device_valid($pdo, $user['id']);
-                        if ($trusted) {
-                            // Skip 2FA for trusted device
+                        // Check if user has skip 2FA enabled for this account
+                        if (!empty($user['skip_2fa_until']) && strtotime($user['skip_2fa_until']) > time()) {
+                            // Skip 2FA for remembered account
                             secure_session_regenerate();
                             $_SESSION['user_id']       = $user['id'];
                             $_SESSION['username']      = $user['username'];
@@ -55,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
                             $_SESSION['last_activity'] = time();
                             $_SESSION['2fa_verified']  = true;
                             $pdo->prepare("UPDATE users SET last_login=NOW() WHERE id=?")->execute([$user['id']]);
-                            audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'Login via trusted device (2FA skipped)',$ip,$_SERVER['HTTP_USER_AGENT']??'');
+                            audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'Login via remembered account (2FA skipped)',$ip,$_SERVER['HTTP_USER_AGENT']??'');
                             header('Location: dashboard.php'); exit;
                         }
                         $_SESSION['pending_2fa_user'] = $user['id'];
@@ -113,26 +112,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reque
     } elseif (!filter_var($email,FILTER_VALIDATE_EMAIL)) {
         $req_error = 'Please enter a valid email address.';
     } else {
-        $chk = $pdo->prepare("SELECT id FROM account_requests WHERE email=? AND status='pending' LIMIT 1");
-        $chk->execute([$email]);
-        if ($chk->fetch()) {
-            $req_error = 'A pending request already exists for this email.';
-            $chk2 = $pdo->prepare("SELECT id FROM users WHERE email=? LIMIT 1");
-            $chk2->execute([$email]);
-            if ($chk2->fetch()) {
-                $req_error = 'An account with this email address already exists. Contact your administrator if you need help logging in.';
+        $chk2 = $pdo->prepare("SELECT id FROM users WHERE email=? LIMIT 1");
+        $chk2->execute([$email]);
+        if ($chk2->fetch()) {
+            $req_error = 'An account with this email address already exists. Contact your administrator if you need help logging in.';
+        } else {
+            $chk = $pdo->prepare("SELECT id FROM account_requests WHERE email=? AND status='pending' LIMIT 1");
+            $chk->execute([$email]);
+            if ($chk->fetch()) {
+                $req_error = 'A pending request already exists for this email.';
             } else {
-            $pdo->prepare("INSERT INTO account_requests (full_name,email,phone,department,badge_number,requested_role,reason) VALUES(?,?,?,?,?,?,?)")
-                ->execute([$full_name,$email,$phone,$department,$badge,$role,$reason]);
-            $rid = $pdo->lastInsertId();
-            foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm)
-                send_notification($pdo,$adm['id'],'New Account Request',"Request from $full_name for role: $role",'info','account_request',$rid);
-            audit_log($pdo,null,$email,null,'account_request_submitted','account_request',$rid,$full_name,"Request by $full_name");
-            $req_success = 'Request submitted successfully. An administrator will contact you.';
-            $show_modal  = false;
+                $pdo->prepare("INSERT INTO account_requests (full_name,email,phone,department,badge_number,requested_role,reason) VALUES(?,?,?,?,?,?,?)")
+                    ->execute([$full_name,$email,$phone,$department,$badge,$role,$reason]);
+                $rid = $pdo->lastInsertId();
+                foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm)
+                    send_notification($pdo,$adm['id'],'New Account Request',"Request from $full_name for role: $role",'info','account_request',$rid);
+                audit_log($pdo,null,$email,null,'account_request_submitted','account_request',$rid,$full_name,"Request by $full_name");
+                $req_success = 'Request submitted successfully. An administrator will contact you.';
+                $show_modal  = false;
+            }
         }
     }
-            }
 }
 $csrf = csrf_token();
 ?>

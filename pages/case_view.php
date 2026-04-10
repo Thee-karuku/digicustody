@@ -34,6 +34,17 @@ if ($role === 'analyst') {
         header('Location: cases.php?error=access_denied');
         exit;
     }
+} elseif ($role === 'investigator') {
+    // Check if investigator has case_access or is the creator
+    $stmt = $pdo->prepare("SELECT 1 FROM case_access WHERE case_id=? AND user_id=?");
+    $stmt->execute([$id, $uid]);
+    $has_access = $stmt->fetchColumn() || (int)$case['created_by'] === (int)$uid;
+    if (!$has_access) {
+        send_notification($pdo, $uid, 'Access Denied',
+            "You attempted to access case {$case['case_number']} without permission.", 'warning', 'case', $id);
+        header('Location: cases.php?error=access_denied&msg=You+do+not+have+access+to+this+case.+Access+has+been+logged.');
+        exit;
+    }
 }
 
 // Log view
@@ -57,15 +68,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['assign_analyst']) && $r
     if (verify_csrf($_POST['csrf_token']??'')) {
         $analyst_id = (int)($_POST['analyst_id'] ?? 0);
         if ($analyst_id > 0) {
-            // Check if user is actually an analyst
-            $chk = $pdo->prepare("SELECT full_name FROM users WHERE id=? AND role='analyst'");
+            // Check if user exists and is an analyst (not investigator)
+            $chk = $pdo->prepare("SELECT full_name, role FROM users WHERE id=?");
             $chk->execute([$analyst_id]);
-            $analyst = $chk->fetch();
-            if ($analyst) {
-                // Update assigned_analyst
+            $user = $chk->fetch();
+            if (!$user) {
+                $assign_error = 'User not found.';
+            } elseif ($user['role'] === 'investigator') {
+                $assign_error = 'Investigators cannot be assigned as analysts.';
+            } elseif ($user['role'] !== 'analyst') {
+                $assign_error = 'Only analysts can be assigned as case analysts.';
+            } else {
+                $analyst = $user;
                 $pdo->prepare("UPDATE cases SET assigned_analyst=?,updated_at=NOW() WHERE id=?")->execute([$analyst_id,$id]);
                 $case['assigned_analyst'] = $analyst_id;
-                // Grant case_access to analyst
                 grant_case_access($pdo, $id, $analyst_id, $uid);
                 send_notification($pdo, $analyst_id, 'Case Assignment',
                     "You have been assigned to case {$case['case_number']}: {$case['case_title']}", 'info', 'case', $id);
@@ -86,10 +102,49 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['assign_analyst']) && $r
     }
 }
 
+// Handle collaborator add/remove (admin and investigators only)
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['collab_action']) && in_array($role, ['admin', 'investigator'])) {
+    if (verify_csrf($_POST['csrf_token']??'')) {
+        $sub_action = $_POST['sub_action'] ?? '';
+        $collab_user_id = (int)($_POST['collab_user_id'] ?? 0);
+        
+        if ($sub_action === 'add' && $collab_user_id > 0) {
+            $access_role = in_array($_POST['access_role'] ?? '', ['analyst', 'collaborator', 'investigator']) 
+                ? $_POST['access_role'] : 'analyst';
+            $notes = trim($_POST['collab_notes'] ?? '') ?: null;
+            
+            $chk = $pdo->prepare("SELECT full_name FROM users WHERE id=? AND status='active'");
+            $chk->execute([$collab_user_id]);
+            $collab = $chk->fetch();
+            
+            if ($collab) {
+                grant_case_access($pdo, $id, $collab_user_id, $uid, $access_role, $notes);
+                send_notification($pdo, $collab_user_id, 'Case Collaboration',
+                    "You have been added as $access_role to case {$case['case_number']}: {$case['case_title']}" . ($notes ? ". Notes: $notes" : ''), 
+                    'info', 'case', $id);
+                audit_log($pdo, $uid, $_SESSION['username'], $role, 'case_updated', 'case', $id,
+                    $case['case_number'], "Added collaborator: {$collab['full_name']} as $access_role");
+            }
+        } elseif ($sub_action === 'remove' && $collab_user_id > 0) {
+            revoke_case_access($pdo, $id, $collab_user_id);
+            audit_log($pdo, $uid, $_SESSION['username'], $role, 'case_updated', 'case', $id,
+                $case['case_number'], "Removed collaborator user_id: $collab_user_id");
+        }
+    }
+}
+
 // Fetch analysts for dropdown
 $analysts_stmt = $pdo->prepare("SELECT id, full_name, email FROM users WHERE role='analyst' ORDER BY full_name");
 $analysts_stmt->execute();
 $analysts = $analysts_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Fetch current collaborators for this case
+$collaborators = get_case_collaborators($pdo, $id);
+
+// Fetch all active users except current user for add-collaborator dropdown
+$all_users_stmt = $pdo->prepare("SELECT id, full_name, username, role FROM users WHERE status='active' AND id != ? ORDER BY role, full_name");
+$all_users_stmt->execute([$uid]);
+$all_users = $all_users_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get currently assigned analyst info
 $assigned_analyst_info = null;
@@ -250,6 +305,11 @@ $csrf = csrf_token();
 
         <!-- Admin: quick status update & analyst assignment -->
         <?php if ($role === 'admin'): ?>
+        <?php if (!empty($assign_error)): ?>
+        <div style="background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:13px;color:var(--danger);">
+            <i class="fas fa-circle-exclamation" style="margin-right:6px"></i><?= e($assign_error) ?>
+        </div>
+        <?php endif; ?>
         <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
             <form method="POST" style="display:flex;align-items:center;gap:8px;">
                 <input type="hidden" name="csrf_token"    value="<?= $csrf ?>">
@@ -309,6 +369,117 @@ $csrf = csrf_token();
         </div>
     </div>
 </div>
+
+<!-- Collaborators Section -->
+<div class="section-card" style="margin-bottom:20px;">
+    <div class="section-head" style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <h3 style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;color:var(--text);">
+            <i class="fas fa-users" style="color:var(--gold)"></i>
+            Collaborators
+            <span class="badge badge-gold" style="margin-left:4px"><?= count($collaborators) ?></span>
+        </h3>
+        <?php if (in_array($role, ['admin', 'investigator'])): ?>
+        <button type="button" class="btn btn-gold btn-sm" onclick="openCollabModal()">
+            <i class="fas fa-user-plus"></i> Add Collaborator
+        </button>
+        <?php endif; ?>
+    </div>
+    <div class="section-body padded">
+        <?php if (empty($collaborators)): ?>
+        <div class="empty-state" style="padding:20px 0;">
+            <i class="fas fa-users"></i>
+            <p>No collaborators added to this case yet.</p>
+        </div>
+        <?php else: ?>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+            <?php foreach ($collaborators as $collab): 
+                $role_colors = ['admin'=>'red','investigator'=>'blue','analyst'=>'green','collaborator'=>'purple'];
+                $role_color = $role_colors[$collab['role']] ?? 'gray';
+            ?>
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--surface2);border-radius:var(--radius);">
+                <div style="width:36px;height:36px;border-radius:50%;background:var(--gold-dim);display:flex;align-items:center;justify-content:center;color:var(--gold);font-size:13px;">
+                    <i class="fas fa-user"></i>
+                </div>
+                <div style="flex:1;min-width:0;">
+                    <p style="font-size:14px;font-weight:500;color:var(--text);"><?= e($collab['full_name']) ?></p>
+                    <p style="font-size:12px;color:var(--muted);">
+                        <span class="badge badge-<?= $role_color ?>" style="font-size:10px;padding:1px 6px;"><?= ucfirst($collab['role']) ?></span>
+                        <span style="margin-left:8px;">Added <?= date('M j, Y', strtotime($collab['granted_at'])) ?></span>
+                    </p>
+                </div>
+                <?php if (in_array($role, ['admin', 'investigator'])): ?>
+                <form method="POST" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
+                    <input type="hidden" name="collab_action" value="1">
+                    <input type="hidden" name="sub_action" value="remove">
+                    <input type="hidden" name="collab_user_id" value="<?= $collab['id'] ?>">
+                    <button type="submit" class="btn btn-outline btn-sm" onclick="return confirm('Remove this collaborator?')">
+                        <i class="fas fa-user-minus"></i> Remove
+                    </button>
+                </form>
+                <?php endif; ?>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<!-- Add Collaborator Modal -->
+<div id="collabModal" class="modal-overlay" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(4,8,18,.85);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:20px;">
+    <div class="section-card" style="max-width:440px;width:100%;animation:up .3s ease;">
+        <div class="section-head" style="padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+            <h3 style="font-size:16px;font-weight:600;color:var(--text);"><i class="fas fa-user-plus" style="color:var(--gold);margin-right:8px"></i>Add Collaborator</h3>
+            <button type="button" onclick="closeCollabModal()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px;"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="section-body padded">
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
+                <input type="hidden" name="collab_action" value="1">
+                <input type="hidden" name="sub_action" value="add">
+                
+                <div class="field">
+                    <label>Select User *</label>
+                    <select name="collab_user_id" required>
+                        <option value="">-- Choose a user --</option>
+                        <?php 
+                        $added_ids = array_column($collaborators, 'id');
+                        foreach ($all_users as $u): 
+                            if (in_array($u['id'], $added_ids)) continue;
+                        ?>
+                        <option value="<?= $u['id'] ?>"><?= e($u['full_name']) ?> (<?= e($u['username']) ?>) — <?= ucfirst($u['role']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <div class="field">
+                    <label>Access Role *</label>
+                    <select name="access_role" required>
+                        <option value="analyst">Analyst</option>
+                        <option value="collaborator">Collaborator</option>
+                        <option value="investigator">Investigator</option>
+                    </select>
+                </div>
+                
+                <div class="field">
+                    <label>Notes (optional)</label>
+                    <input type="text" name="collab_notes" placeholder="e.g., External consultant, specific task...">
+                </div>
+                
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                    <button type="button" class="btn btn-outline" onclick="closeCollabModal()">Cancel</button>
+                    <button type="submit" class="btn btn-gold"><i class="fas fa-user-plus"></i> Add Collaborator</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function openCollabModal(){document.getElementById('collabModal').style.display='flex';}
+function closeCollabModal(){document.getElementById('collabModal').style.display='none';}
+document.getElementById('collabModal').addEventListener('click',function(e){if(e.target===this)closeCollabModal();});
+</script>
 
 <!-- Tabs -->
 <div class="section-card">

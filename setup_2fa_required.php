@@ -164,7 +164,7 @@ html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:
           </div>
           <label class="remember-me">
             <input type="checkbox" name="remember_device" value="1">
-            <span>Remember this device for 30 days</span>
+            <span>Remember this account for 30 days</span>
           </label>
           <button type="submit" class="btn"><i class="fas fa-check"></i> Enable 2FA & Continue</button>
         </form>

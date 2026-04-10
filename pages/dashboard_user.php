@@ -30,17 +30,40 @@ if ($role === 'analyst') {
         JOIN users u_up ON u_up.id = e.uploaded_by
         JOIN cases c    ON c.id    = e.case_id
         WHERE e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
-           OR e.case_id IN (SELECT id FROM cases WHERE assigned_analyst=?)
-           OR e.uploaded_by=?
-           OR e.current_custodian=?
         ORDER BY e.uploaded_at DESC
         LIMIT 50
     ");
-    $all_evidence->execute([$uid, $uid, $uid, $uid]);
+    $all_evidence->execute([$uid]);
     $all_evidence = $all_evidence->fetchAll(PDO::FETCH_ASSOC);
     
     $total_evidence = count($all_evidence);
-    $total_cases = (int)$pdo->query("SELECT COUNT(DISTINCT case_id) FROM evidence WHERE case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid) OR case_id IN (SELECT id FROM cases WHERE assigned_analyst=$uid)")->fetchColumn();
+    $total_cases = (int)$pdo->query("SELECT COUNT(DISTINCT case_id) FROM evidence WHERE case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=$uid)")->fetchColumn();
+} elseif ($role === 'investigator') {
+    $all_evidence = $pdo->prepare("
+        SELECT e.*,
+               u_up.full_name  AS uploader_name,
+               c.case_number,
+               c.case_title,
+               (SELECT COUNT(*) FROM audit_logs al
+                WHERE al.target_type='evidence' AND al.target_id=e.id) AS action_count,
+               (SELECT hv.integrity_status
+                FROM hash_verifications hv
+                WHERE hv.evidence_id=e.id
+                ORDER BY hv.verified_at DESC LIMIT 1) AS last_integrity,
+               (SELECT COUNT(*) FROM analysis_reports ar
+                WHERE ar.evidence_id=e.id) AS report_count
+        FROM evidence e
+        JOIN users u_up ON u_up.id = e.uploaded_by
+        JOIN cases c    ON c.id    = e.case_id
+        WHERE e.uploaded_by=? OR e.current_custodian=? OR e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
+        ORDER BY e.uploaded_at DESC
+        LIMIT 50
+    ");
+    $all_evidence->execute([$uid, $uid, $uid]);
+    $all_evidence = $all_evidence->fetchAll(PDO::FETCH_ASSOC);
+    
+    $total_evidence = count($all_evidence);
+    $total_cases = (int)$pdo->query("SELECT COUNT(*) FROM cases WHERE status IN ('open','under_investigation')")->fetchColumn();
 } else {
     $all_evidence = $pdo->query("
         SELECT e.*,
@@ -71,27 +94,6 @@ $s->execute([$uid]); $my_reports = (int)$s->fetchColumn();
 
 $s = $pdo->prepare("SELECT COUNT(*) FROM hash_verifications WHERE verified_by=? AND integrity_status='tampered'");
 $s->execute([$uid]); $tampered = (int)$s->fetchColumn();
-
-// ── All evidence with chain of custody info ───────────────
-$all_evidence = $pdo->query("
-    SELECT e.*,
-           u_up.full_name  AS uploader_name,
-           c.case_number,
-           c.case_title,
-           (SELECT COUNT(*) FROM audit_logs al
-            WHERE al.target_type='evidence' AND al.target_id=e.id) AS action_count,
-           (SELECT hv.integrity_status
-            FROM hash_verifications hv
-            WHERE hv.evidence_id=e.id
-            ORDER BY hv.verified_at DESC LIMIT 1) AS last_integrity,
-           (SELECT COUNT(*) FROM analysis_reports ar
-            WHERE ar.evidence_id=e.id) AS report_count
-    FROM evidence e
-    JOIN users u_up ON u_up.id = e.uploaded_by
-    JOIN cases c    ON c.id    = e.case_id
-    ORDER BY e.uploaded_at DESC
-    LIMIT 50
-")->fetchAll(PDO::FETCH_ASSOC);
 
 // ── My recent uploads ─────────────────────────────────────
 $my_recent = $pdo->prepare("
@@ -133,15 +135,30 @@ if ($role === 'analyst') {
 }
 
 // ── Integrity alerts ──────────────────────────────────────
-$integrity_alerts = $pdo->query("
-    SELECT e.evidence_number, e.title, e.id,
-           hv.integrity_status, hv.verified_at, u.full_name AS verifier
-    FROM hash_verifications hv
-    JOIN evidence e ON e.id = hv.evidence_id
-    JOIN users u    ON u.id = hv.verified_by
-    WHERE hv.integrity_status = 'tampered'
-    ORDER BY hv.verified_at DESC LIMIT 5
-")->fetchAll(PDO::FETCH_ASSOC);
+if ($role === 'investigator') {
+    $integrity_alerts = $pdo->prepare("
+        SELECT e.evidence_number, e.title, e.id,
+               hv.integrity_status, hv.verified_at, u.full_name AS verifier
+        FROM hash_verifications hv
+        JOIN evidence e ON e.id = hv.evidence_id
+        JOIN users u    ON u.id = hv.verified_by
+        WHERE hv.integrity_status = 'tampered'
+          AND (e.uploaded_by=? OR e.current_custodian=? OR e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?))
+        ORDER BY hv.verified_at DESC LIMIT 5
+    ");
+    $integrity_alerts->execute([$uid, $uid, $uid]);
+    $integrity_alerts = $integrity_alerts->fetchAll(PDO::FETCH_ASSOC);
+} else {
+    $integrity_alerts = $pdo->query("
+        SELECT e.evidence_number, e.title, e.id,
+               hv.integrity_status, hv.verified_at, u.full_name AS verifier
+        FROM hash_verifications hv
+        JOIN evidence e ON e.id = hv.evidence_id
+        JOIN users u    ON u.id = hv.verified_by
+        WHERE hv.integrity_status = 'tampered'
+        ORDER BY hv.verified_at DESC LIMIT 5
+    ")->fetchAll(PDO::FETCH_ASSOC);
+}
 
 $type_icons = [
     'image'=>['fa-file-image','blue'],'video'=>['fa-file-video','purple'],

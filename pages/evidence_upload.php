@@ -105,6 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     $write_blocker_used   = isset($_POST['write_blocker_used']) ? 'Yes' : 'No';
     $original_device      = trim($_POST['original_device'] ?? '');
     $device_serial        = trim($_POST['device_serial'] ?? '');
+    $device_type          = trim($_POST['device_type'] ?? '');
     $device_make_model    = trim($_POST['device_make_model'] ?? '');
     $os_detected          = trim($_POST['os_detected'] ?? '');
 
@@ -120,36 +121,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     $issuing_court        = trim($_POST['issuing_court'] ?? '');
     $ob_number            = trim($_POST['ob_number'] ?? '');
 
-    // ── GPS & Environment ──
-    $gps_lat              = trim($_POST['gps_lat'] ?? '');
-    $gps_lon              = trim($_POST['gps_lon'] ?? '');
-    $scene_temp           = trim($_POST['scene_temp'] ?? '');
-    $scene_weather        = trim($_POST['scene_weather'] ?? '');
-
-    // ── Relinquishment & Receipt ──
-    $relinquished_by      = trim($_POST['relinquished_by'] ?? '');
-    $relinquished_by_role = trim($_POST['relinquished_by_role'] ?? '');
-    $relinquished_dt      = trim($_POST['relinquished_datetime'] ?? '');
-    $relinquished_loc     = trim($_POST['relinquished_location'] ?? '');
-    $received_by          = trim($_POST['received_by'] ?? $_SESSION['full_name']);
-    $received_dt          = trim($_POST['received_datetime'] ?? '');
-
-    // ── Transportation & Storage ──
     $transport_method     = trim($_POST['transport_method'] ?? '');
-    $transport_dt         = trim($_POST['transport_datetime'] ?? '');
-    $storage_location     = trim($_POST['storage_location'] ?? '');
-    $storage_conditions   = trim($_POST['storage_conditions'] ?? '');
-
-    // ── Photo / Media References ──
-    $photo_ref            = trim($_POST['photo_ref'] ?? '');
-    $video_ref            = trim($_POST['video_ref'] ?? '');
-    $sketch_ref           = trim($_POST['sketch_ref'] ?? '');
-    $other_media_ref      = trim($_POST['other_media_ref'] ?? '');
 
     // ── Network Evidence Specifics ──
     $ip_address           = trim($_POST['ip_address'] ?? '');
     $mac_address          = trim($_POST['mac_address'] ?? '');
-    $network_ssid         = trim($_POST['network_ssid'] ?? '');
     $hostname             = trim($_POST['hostname'] ?? '');
 
     // ── Handling Precautions ──
@@ -191,32 +167,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     if ($warrant_number) $structured_notes .= "Warrant: $warrant_number\n";
     if ($issuing_court) $structured_notes .= "Court: $issuing_court\n";
     if ($ob_number) $structured_notes .= "OB: $ob_number\n";
-    if ($gps_lat && $gps_lon) $structured_notes .= "GPS: $gps_lat, $gps_lon\n";
-    if ($scene_temp) $structured_notes .= "Temp: ${scene_temp}°C\n";
-    if ($scene_weather) $structured_notes .= "Weather: $scene_weather\n";
-    if ($relinquished_by) $structured_notes .= "Relinquished: $relinquished_by";
-    if ($relinquished_by_role) $structured_notes .= " ($relinquished_by_role)";
-    if ($relinquished_by) $structured_notes .= "\n";
-    if ($relinquished_dt) $structured_notes .= "Relinquished at: $relinquished_dt\n";
-    if ($relinquished_loc) $structured_notes .= "Relinquished loc: $relinquished_loc\n";
-    if ($received_by) $structured_notes .= "Received by: $received_by\n";
-    if ($received_dt) $structured_notes .= "Received at: $received_dt\n";
-    if ($transport_method) $structured_notes .= "Transport: $transport_method\n";
-    if ($transport_dt) $structured_notes .= "Transport date: $transport_dt\n";
-    if ($storage_location) $structured_notes .= "Storage: $storage_location\n";
-    if ($storage_conditions) $structured_notes .= "Storage conditions: $storage_conditions\n";
-    if ($photo_ref) $structured_notes .= "Photo ref: $photo_ref\n";
+    if ($transport_method) $structured_notes .= "Handover: $transport_method\n";
     if ($collector_unit) $structured_notes .= "Unit: $collector_unit\n";
     if ($collector_contact) $structured_notes .= "Contact: $collector_contact\n";
     if ($collection_notes) $structured_notes .= "Notes: $collection_notes\n";
     if ($ip_address) $structured_notes .= "IP: $ip_address\n";
     if ($mac_address) $structured_notes .= "MAC: $mac_address\n";
-    if ($network_ssid) $structured_notes .= "SSID: $network_ssid\n";
     if ($hostname) $structured_notes .= "Hostname: $hostname\n";
     
     // Legacy concatenated notes (for backwards compatibility)
-    $full_coc_notes = "";
-    if ($collected_by_name)    $full_coc_notes .= "Collected by: $collected_by_name\n";
     $full_coc_notes = "";
     if ($collected_by_name)    $full_coc_notes .= "Collected by: $collected_by_name\n";
     if ($collector_badge)      $full_coc_notes .= "Badge/ID: $collector_badge\n";
@@ -245,27 +204,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     if ($warrant_number)       $full_coc_notes .= "Warrant/Order: $warrant_number\n";
     if ($issuing_court)        $full_coc_notes .= "Issuing court: $issuing_court\n";
     if ($ob_number)            $full_coc_notes .= "OB/Case number: $ob_number\n";
-    if ($gps_lat && $gps_lon)  $full_coc_notes .= "GPS: $gps_lat, $gps_lon\n";
-    if ($scene_temp)           $full_coc_notes .= "Temperature: ${scene_temp}°C\n";
-    if ($scene_weather)        $full_coc_notes .= "Environment: $scene_weather\n";
-    if ($relinquished_by)      $full_coc_notes .= "Relinquished by: $relinquished_by";
-    if ($relinquished_by_role) $full_coc_notes .= " ($relinquished_by_role)";
-    if ($relinquished_by)      $full_coc_notes .= "\n";
-    if ($relinquished_dt)      $full_coc_notes .= "Relinquished at: $relinquished_dt\n";
-    if ($relinquished_loc)     $full_coc_notes .= "Relinquished location: $relinquished_loc\n";
-    if ($received_by)          $full_coc_notes .= "Received by: $received_by\n";
-    if ($received_dt)          $full_coc_notes .= "Received at: $received_dt\n";
-    if ($transport_method)     $full_coc_notes .= "Transport: $transport_method\n";
-    if ($transport_dt)         $full_coc_notes .= "Transport date: $transport_dt\n";
-    if ($storage_location)     $full_coc_notes .= "Storage: $storage_location\n";
-    if ($storage_conditions)   $full_coc_notes .= "Storage conditions: $storage_conditions\n";
-    if ($photo_ref)            $full_coc_notes .= "Photo ref: $photo_ref\n";
-    if ($video_ref)            $full_coc_notes .= "Video ref: $video_ref\n";
-    if ($sketch_ref)           $full_coc_notes .= "Sketch ref: $sketch_ref\n";
-    if ($other_media_ref)      $full_coc_notes .= "Other media: $other_media_ref\n";
+    if ($transport_method)     $full_coc_notes .= "Handover: $transport_method\n";
     if ($ip_address)           $full_coc_notes .= "IP address(es): $ip_address\n";
     if ($mac_address)          $full_coc_notes .= "MAC address(es): $mac_address\n";
-    if ($network_ssid)         $full_coc_notes .= "Network SSID: $network_ssid\n";
     if ($hostname)             $full_coc_notes .= "Hostname: $hostname\n";
     $precautions = [];
     if ($handle_fragile)       $precautions[] = 'Fragile';
@@ -275,6 +216,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     if ($handle_remote_wipe)   $precautions[] = 'Remote wipe risk';
     if ($handle_encrypted)     $precautions[] = 'Encrypted';
     if (!empty($precautions))  $full_coc_notes .= "Precautions: " . implode(', ', $precautions) . "\n";
+
+    // Required field validation
+    $required = [
+        'Collection Date' => $collection_date,
+        'Collection Time' => $collection_time,
+        'Collection Location' => $collection_location,
+        'Collected By' => $collected_by_name,
+        'Badge Number' => $collector_badge,
+        'Legal Basis' => $legal_basis,
+        'Condition on Receipt' => $condition_on_receipt,
+        'Witness 1 Name' => $witness_name,
+    ];
+    $missing = [];
+    foreach ($required as $field => $value) {
+        if (trim($value) === '') {
+            $missing[] = $field;
+        }
+    }
+    if (!empty($missing)) {
+        echo json_encode(['success' => false, 'error' => 'Required fields missing: ' . implode(', ', $missing)]);
+        exit;
+    }
+
+    // Examiner declaration must be confirmed
+    if (!isset($_POST['examiner_declaration']) || $_POST['examiner_declaration'] !== '1') {
+        echo json_encode(['success' => false, 'error' => 'You must confirm the examiner declaration before uploading.']);
+        exit;
+    }
 
     $ev_number = generate_evidence_number($pdo);
     $upload    = handle_evidence_upload($_FILES['ev_file'], $ev_number);
@@ -291,15 +260,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
          collection_notes,collector_badge,tools_used,write_blocker_used,device_serial,device_type,
          device_make_model,os_detected,seal_number,condition_on_receipt,
          witness_name,witness_badge,witness2_name,witness2_badge,
-         gps_lat,gps_lon,current_custodian,status,uploaded_by)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'collected',?)")
+         current_custodian,status,uploaded_by)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'collected',?)")
         ->execute([
             $ev_number, $case_id, $title, $description, $evidence_type,
             $acquisition_method, $upload['filename'], $upload['filepath'],
             $upload['file_size'], $upload['mime_type'],
             $upload['sha256'], $upload['md5'],
             $collection_datetime, $full_location,
-            trim($structured_notes), $collector_badge, $tools_used, ($write_blocker_used ? 1 : 0), $device_serial, $device_type, $device_make_model, $os_detected, $seal_number, $condition_on_receipt, $witness_name, $witness_badge, $witness2_name, $witness2_badge, $gps_lat, $gps_lon, $uid, $uid
+            trim($structured_notes), $collector_badge, $tools_used, ($write_blocker_used ? 1 : 0), $device_serial, $device_type, $device_make_model, $os_detected, $seal_number, $condition_on_receipt, $witness_name, $witness_badge, $witness2_name, $witness2_badge, $uid, $uid
         ]);
     $ev_id = $pdo->lastInsertId();
 
@@ -318,17 +287,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
             'condition'=>$condition_on_receipt, 'seal'=>$seal_number,
             'legal_basis'=>$legal_basis, 'warrant_number'=>$warrant_number,
             'issuing_court'=>$issuing_court, 'ob_number'=>$ob_number,
-            'gps_lat'=>$gps_lat, 'gps_lon'=>$gps_lon,
-            'relinquished_by'=>$relinquished_by, 'received_by'=>$received_by,
-            'transport_method'=>$transport_method, 'storage_location'=>$storage_location,
+            'transport_method'=>$transport_method,
             'ip_address'=>$ip_address, 'mac_address'=>$mac_address,
-            'network_ssid'=>$network_ssid, 'hostname'=>$hostname,
+            'hostname'=>$hostname,
             'precautions'=>array_filter([
                 'fragile'=>$handle_fragile==='Yes','emf'=>$handle_emf==='Yes',
                 'temp'=>$handle_temp==='Yes','bio'=>$handle_bio==='Yes',
                 'remote_wipe'=>$handle_remote_wipe==='Yes','encrypted'=>$handle_encrypted==='Yes',
             ]),
         ]);
+
+    // Save evidence links
+    $linked_json = $_POST['linked_evidence'] ?? '';
+    if ($linked_json) {
+        $linked = json_decode($linked_json, true);
+        if (is_array($linked)) {
+            $stmt_link = $pdo->prepare("INSERT IGNORE INTO evidence_links (evidence_id, linked_evidence_id, link_type) VALUES (?, ?, ?)");
+            foreach ($linked as $link) {
+                if (!empty($link['id']) && !empty($link['link_type'])) {
+                    $stmt_link->execute([$ev_id, $link['id'], $link['link_type']]);
+                    audit_log($pdo, $uid, $_SESSION['username'], $role, 'evidence_linked', 'evidence', $ev_id, $ev_number,
+                        "Linked evidence {$link['id']} as {$link['link_type']}", $_SERVER['REMOTE_ADDR'] ?? '');
+                }
+            }
+        }
+    }
 
     // Notify admins
     foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm) {
@@ -660,7 +643,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                 <input type="text" id="collectedByName" value="<?= e($_SESSION['full_name']) ?>">
             </div>
             <div class="field">
-                <label>Badge / Staff Number</label>
+                <label>Badge / Staff Number <span class="req">*</span></label>
                 <input type="text" id="collectorBadge" placeholder="e.g. DCI-00123">
             </div>
             <div class="field">
@@ -680,9 +663,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                 <label>Condition on Receipt <span class="req">*</span></label>
                 <select id="conditionOnReceipt">
                     <option value="">— Select condition —</option>
+                    <option>Sealed / Intact packaging</option>
                     <option>Intact / Undamaged</option>
+                    <option>Previously opened</option>
                     <option>Powered On</option>
                     <option>Powered Off</option>
+                    <option>Corrupted / Unreadable</option>
+                    <option>Encrypted / Password protected</option>
                     <option>Damaged — Screen cracked</option>
                     <option>Damaged — Physical damage</option>
                     <option>Water damaged</option>
@@ -698,6 +685,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                     <option>Evidence bag (sealed)</option>
                     <option>Hard case / Container</option>
                     <option>Faraday bag</option>
+                    <option>Faraday cage</option>
+                    <option>Write-protected media</option>
+                    <option>Tamper-evident container</option>
                     <option>Cardboard box</option>
                     <option>No packaging</option>
                     <option>Other</option>
@@ -714,20 +704,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         </div>
 
         <!-- Acquisition / Forensic details -->
+        <div id="deviceSection">
         <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-microchip"></i> Acquisition &amp; Forensic Details</p>
         <div class="grid-2" style="margin-bottom:16px;">
             <div class="field">
                 <label>Acquisition Method</label>
                 <select id="acquisitionMethod">
                     <option value="">— Select method —</option>
-                    <option>Logical acquisition</option>
-                    <option>Physical acquisition</option>
-                    <option>Full disk image (dd/E01)</option>
-                    <option>Selective file copy</option>
-                    <option>Live acquisition</option>
-                    <option>Cloud extraction</option>
-                    <option>Network capture</option>
-                    <option>Manual collection</option>
+                    <optgroup label="Physical Device">
+                        <option>UFED extraction</option>
+                        <option>Oxygen Forensic extraction</option>
+                        <option>EnCase acquisition</option>
+                        <option>Logical acquisition</option>
+                        <option>Physical acquisition</option>
+                        <option>Full disk image (dd/E01)</option>
+                        <option>Live acquisition</option>
+                    </optgroup>
+                    <optgroup label="Network &amp; Cloud">
+                        <option>Cloud extraction</option>
+                        <option>Network capture</option>
+                    </optgroup>
+                    <optgroup label="Manual">
+                        <option>Manual file copy</option>
+                        <option>Manual collection</option>
+                        <option>Autopsy</option>
+                        <option>Selective file copy</option>
+                    </optgroup>
                     <option>Other</option>
                 </select>
             </div>
@@ -752,6 +754,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                 <input type="text" id="osDetected" placeholder="e.g. Windows 11 Pro, Android 13">
             </div>
         </div>
+        </div>
 
         <!-- Write blocker -->
         <div style="background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.15);border-radius:var(--radius);padding:13px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">
@@ -768,11 +771,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-gavel"></i> Legal Authority</p>
         <div class="grid-2" style="margin-bottom:16px;">
             <div class="field">
-                <label>Legal Basis for Collection</label>
+                <label>Legal Basis for Collection <span class="req">*</span></label>
                 <select id="legalBasis">
                     <option value="">— Select —</option>
                     <option>Search Warrant</option>
                     <option>Court Order</option>
+                    <option>Production Order</option>
+                    <option>Mutual Legal Assistance Treaty (MLAT)</option>
+                    <option>Regulatory Authority Order</option>
+                    <option>Employer Authorization</option>
                     <option>Consent (Written)</option>
                     <option>Consent (Verbal)</option>
                     <option>Exigent Circumstances</option>
@@ -797,39 +804,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
             </div>
         </div>
 
-        <!-- GPS & Environment -->
-        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-location-crosshairs"></i> GPS &amp; Environmental Conditions</p>
-        <div class="grid-3" style="margin-bottom:16px;">
-            <div class="field">
-                <label>GPS Latitude</label>
-                <input type="text" id="gpsLat" placeholder="e.g. -1.2921">
-            </div>
-            <div class="field">
-                <label>GPS Longitude</label>
-                <input type="text" id="gpsLon" placeholder="e.g. 36.8219">
-            </div>
-            <div class="field">
-                <button type="button" class="btn btn-outline btn-sm" onclick="getGPS()" id="gpsBtn" style="margin-top:22px;">
-                    <i class="fas fa-location-arrow"></i> Get Current GPS
-                </button>
-            </div>
-        </div>
-        <div class="grid-2" style="margin-bottom:16px;">
-            <div class="field">
-                <label>Temperature at Scene (°C)</label>
-                <input type="text" id="sceneTemp" placeholder="e.g. 24">
-            </div>
-            <div class="field">
-                <label>Weather / Environmental Notes</label>
-                <input type="text" id="sceneWeather" placeholder="e.g. Indoor, air-conditioned">
-            </div>
-        </div>
-
         <!-- Witness -->
         <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-eye"></i> Witness Information</p>
         <div class="grid-2" style="margin-bottom:16px;">
             <div class="field">
-                <label>Witness 1 Name</label>
+                <label>Witness 1 Name <span class="req">*</span></label>
                 <input type="text" id="witnessName" placeholder="Full name of witness present">
             </div>
             <div class="field">
@@ -846,86 +825,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
             </div>
         </div>
 
-        <!-- Relinquishment & Receipt -->
-        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-handshake"></i> Relinquishment &amp; Receipt</p>
+        <!-- Chain of Custody Handover -->
+        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-hand-holding"></i> Chain of Custody Handover</p>
         <div class="grid-2" style="margin-bottom:16px;">
             <div class="field">
-                <label>Relinquished By</label>
-                <input type="text" id="relinquishedBy" placeholder="Person who handed over evidence">
-            </div>
-            <div class="field">
-                <label>Relinquished By — Title / Role</label>
-                <input type="text" id="relinquishedByRole" placeholder="e.g. IT Manager, Security Guard">
-            </div>
-            <div class="field">
-                <label>Relinquished Date &amp; Time</label>
-                <input type="datetime-local" id="relinquishedDateTime">
-            </div>
-            <div class="field">
-                <label>Relinquished At (Location)</label>
-                <input type="text" id="relinquishedLocation" placeholder="Where evidence was handed over">
-            </div>
-            <div class="field">
-                <label>Received By (Investigator)</label>
-                <input type="text" id="receivedBy" value="<?= e($_SESSION['full_name']) ?>" placeholder="Investigator who received evidence">
-            </div>
-            <div class="field">
-                <label>Received Date &amp; Time</label>
-                <input type="datetime-local" id="receivedDateTime">
-            </div>
-        </div>
-
-        <!-- Transportation -->
-        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-truck"></i> Transportation &amp; Storage</p>
-        <div class="grid-2" style="margin-bottom:16px;">
-            <div class="field">
-                <label>Transport Method</label>
+                <label>Handover Method</label>
                 <select id="transportMethod">
                     <option value="">— Select —</option>
-                    <option>Hand-carried by officer</option>
-                    <option>Secured evidence vehicle</option>
-                    <option>Courier (sealed)</option>
-                    <option>Evidence locker transfer</option>
+                    <option>In person</option>
+                    <option>Evidence locker</option>
+                    <option>Secure courier</option>
                     <option>Digital transfer (encrypted)</option>
-                    <option>Other</option>
+                    <option>Internal mail</option>
                 </select>
-            </div>
-            <div class="field">
-                <label>Transport Date &amp; Time</label>
-                <input type="datetime-local" id="transportDateTime">
-            </div>
-            <div class="field">
-                <label>Storage Location</label>
-                <input type="text" id="storageLocation" placeholder="e.g. Evidence Room A, Locker 12">
-            </div>
-            <div class="field">
-                <label>Storage Conditions</label>
-                <input type="text" id="storageConditions" placeholder="e.g. Climate-controlled, secure access">
-            </div>
-        </div>
-
-        <!-- Photo / Media references -->
-        <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-camera"></i> Photo &amp; Media References</p>
-        <div class="grid-2" style="margin-bottom:16px;">
-            <div class="field">
-                <label>Crime Scene Photo Reference</label>
-                <input type="text" id="photoRef" placeholder="e.g. Photos CS-001 through CS-015">
-            </div>
-            <div class="field">
-                <label>Video Recording Reference</label>
-                <input type="text" id="videoRef" placeholder="e.g. Bodycam footage VID-2026-001">
-            </div>
-            <div class="field">
-                <label>Sketch / Diagram Reference</label>
-                <input type="text" id="sketchRef" placeholder="e.g. Scene sketch SK-001">
-            </div>
-            <div class="field">
-                <label>Other Media References</label>
-                <input type="text" id="otherMediaRef" placeholder="e.g. 360° scan, drone footage">
             </div>
         </div>
 
         <!-- Network evidence specifics -->
+        <div id="networkSection" style="display:none;">
         <p style="font-size:11px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;display:flex;align-items:center;gap:6px;"><i class="fas fa-network-wired"></i> Network &amp; Digital Evidence Specifics</p>
         <div class="grid-2" style="margin-bottom:16px;">
             <div class="field">
@@ -937,13 +854,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                 <input type="text" id="macAddress" placeholder="e.g. AA:BB:CC:DD:EE:FF">
             </div>
             <div class="field">
-                <label>Network Name / SSID</label>
-                <input type="text" id="networkSSID" placeholder="e.g. Office-WiFi-5G">
-            </div>
-            <div class="field">
                 <label>Domain / Hostname</label>
                 <input type="text" id="hostname" placeholder="e.g. WORKSTATION-01, server.local">
             </div>
+        </div>
         </div>
 
         <!-- Evidence handling precautions -->
@@ -980,7 +894,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         <div class="grid-2">
             <div class="field">
                 <label>Collection Notes</label>
-                <textarea id="collectionNotes" placeholder="Describe how the evidence was found, its context, and any relevant observations at the scene..."></textarea>
+                <textarea id="collectionNotes" placeholder="Describe how the evidence was found, its context, and any relevant observations at the scene. Include network SSID if applicable..."></textarea>
             </div>
             <div class="field">
                 <label>Chain of Custody Notes</label>
@@ -1010,11 +924,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                     <span id="queueCount">0</span> file(s) ready &nbsp;·&nbsp;
                     <span id="queueSize">0 B</span> total
                 </p>
+                <!-- Examiner Declaration -->
+                <div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.25);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;">
+                    <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13.5px;color:var(--text);line-height:1.5;">
+                        <input type="checkbox" id="examinerDeclaration" onchange="toggleUploadBtn()" style="width:18px;height:18px;margin-top:2px;accent-color:var(--gold);cursor:pointer;flex-shrink:0;">
+                        <span>I confirm that this evidence was collected lawfully, has not been altered, and the file submitted is an exact copy of the original.</span>
+                    </label>
+                </div>
                 <div style="display:flex;gap:10px;">
                     <button type="button" class="btn btn-outline" onclick="clearQueue()">
                         <i class="fas fa-trash"></i> Clear All
                     </button>
-                    <button type="button" class="btn btn-gold" onclick="uploadAll()" id="uploadAllBtn">
+                    <button type="button" class="btn btn-gold" onclick="uploadAll()" id="uploadAllBtn" disabled>
                         <i class="fas fa-upload"></i> Upload All Evidence
                     </button>
                 </div>
@@ -1112,6 +1033,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 <script>
 // ── sidebar/nav boilerplate ──
 function toggleSidebar(){const sb=document.getElementById('sidebar'),ma=document.getElementById('mainArea');if(window.innerWidth<=900){sb.classList.toggle('mobile-open');}else{sb.classList.toggle('collapsed');ma.classList.toggle('collapsed');}localStorage.setItem('sb_collapsed',sb.classList.contains('collapsed')?'1':'0');}
+
+// ── Show/hide network section based on evidence type ──
+const networkTypes=['network_capture','database','mobile_data','log_file'];
+const deviceTypes=['mobile_data','database','image'];
+function toggleNetworkSection(evType){
+    const ns=document.getElementById('networkSection');
+    if(ns) ns.style.display=networkTypes.includes(evType)?'block':'none';
+}
+function toggleDeviceSection(evType){
+    const ds=document.getElementById('deviceSection');
+    if(ds) ds.style.display=deviceTypes.includes(evType)?'block':'none';
+}
+function toggleAllConditionalSections(evType){
+    toggleNetworkSection(evType);
+    toggleDeviceSection(evType);
+}
+function toggleUploadBtn(){
+    const btn=document.getElementById('uploadAllBtn');
+    const cb=document.getElementById('examinerDeclaration');
+    btn.disabled=!cb.checked;
+}
+function checkAllTypeSelects(){
+    document.querySelectorAll('select[id^="type_"]').forEach(function(sel){
+        toggleAllConditionalSections(sel.value);
+    });
+}
 if(localStorage.getItem('sb_collapsed')==='1'&&window.innerWidth>900){document.getElementById('sidebar').classList.add('collapsed');document.getElementById('mainArea').classList.add('collapsed');}
 function toggleNotif(){document.getElementById('notifDropdown').classList.toggle('open');document.getElementById('userDropdown').classList.remove('open');}
 function toggleUserMenu(){document.getElementById('userDropdown').classList.toggle('open');document.getElementById('notifDropdown').classList.remove('open');}
@@ -1123,6 +1070,56 @@ let selectedCaseId = null;
 let fileQueue      = [];
 let uploadResults  = [];
 let fileIdCounter  = 0;
+let linkedEvidence = {}; // { fileId: [{id, evidence_number, title, link_type}] }
+
+// ── load related evidence for dropdowns ──
+async function loadRelatedEvidence(){
+    if(!selectedCaseId) return;
+    try {
+        const res = await fetch(`../api/search_evidence.php?case_id=${selectedCaseId}`);
+        const data = await res.json();
+        document.querySelectorAll('select[id^="related_"]').forEach(sel => {
+            const fileId = sel.id.replace('related_','');
+            const current = linkedEvidence[fileId] || [];
+            const currentIds = current.map(x=>x.id);
+            const opts = current.map(x=>`<option value="${x.id}|${x.link_type}">${x.evidence_number} — ${x.title.substring(0,30)} [${x.link_type}]</option>`).join('');
+            sel.innerHTML = `<option value="">— Link related evidence (optional) —</option>${opts}`+
+                data.filter(e=>!currentIds.includes(e.id)).map(e=>`<option value="${e.id}|related_to">${e.evidence_number} — ${e.title.substring(0,40)}</option>`).join('');
+        });
+    } catch(e){console.error('Failed to load related evidence',e);}
+}
+
+function addRelatedEvidence(fileId, sel){
+    if(!sel.value) return;
+    const [evId, linkType] = sel.value.split('|');
+    const label = sel.options[sel.selectedIndex].text;
+    const evNum = label.split('—')[0].trim();
+    const evTitle = label.split('—')[1]?.trim() || '';
+    if(!linkedEvidence[fileId]) linkedEvidence[fileId]=[];
+    if(!linkedEvidence[fileId].find(x=>x.id==evId)){
+        linkedEvidence[fileId].push({id:evId, evidence_number:evNum, title:evTitle, link_type:linkType});
+    }
+    sel.value='';
+    renderRelatedList(fileId);
+}
+
+function removeRelatedEvidence(fileId, evId){
+    linkedEvidence[fileId] = linkedEvidence[fileId].filter(x=>x.id!=evId);
+    renderRelatedList(fileId);
+}
+
+function renderRelatedList(fileId){
+    const container = document.getElementById('relatedList_'+fileId);
+    if(!container) return;
+    const items = linkedEvidence[fileId] || [];
+    container.innerHTML = items.map(x=>`
+        <span style="display:inline-flex;align-items:center;gap:4px;background:var(--gold-dim);border:1px solid rgba(201,168,76,0.3);border-radius:5px;padding:2px 8px;font-size:11px;color:var(--text);">
+            ${x.evidence_number}
+            <span style="color:var(--muted);font-size:10px;">(${x.link_type})</span>
+            <button type="button" onclick="removeRelatedEvidence('${fileId}',${x.id})" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:0;margin-left:2px;font-size:12px;">&times;</button>
+        </span>
+    `).join('');
+}
 
 // ── step indicator ──
 function setStep(n){
@@ -1150,6 +1147,7 @@ function caseSelected(sel){
         enableSection('sec-collection');
         enableSection('sec-files');
         setStep(2);
+        loadRelatedEvidence();
     } else {
         info.style.display = 'none';
         disableSection('sec-assignment');
@@ -1226,6 +1224,7 @@ function addFile(file){
     else if(['eml','msg','mbox'].includes(ext)) autoType='email';
     else if(['db','sqlite','mdf','sql'].includes(ext)) autoType='database';
     else if(['pcap','pcapng','cap'].includes(ext)) autoType='network_capture';
+    else if(['bak','dmp','ab','nandroid'].includes(ext)) autoType='mobile_data';
 
     const div=document.createElement('div');
     div.className='file-item';div.id=id;
@@ -1243,7 +1242,7 @@ function addFile(file){
                 <input type="text" id="title_${id}" value="${esc(file.name.replace(/\.[^/.]+$/,''))}" placeholder="Descriptive title">
             </div>
             <div><label>Evidence Type</label>
-                <select id="type_${id}">
+                <select id="type_${id}" onchange="toggleAllConditionalSections(this.value)">
                     <option value="image" ${autoType==='image'?'selected':''}>Image</option>
                     <option value="video" ${autoType==='video'?'selected':''}>Video</option>
                     <option value="document" ${autoType==='document'?'selected':''}>Document</option>
@@ -1258,12 +1257,20 @@ function addFile(file){
             <div class="full"><label>Description</label>
                 <textarea id="desc_${id}" placeholder="What does this file contain? Why is it relevant to the investigation?">${esc(file.name)}</textarea>
             </div>
+            <div class="full">
+                <label>Related Evidence</label>
+                <select id="related_${id}" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:13px;" onchange="addRelatedEvidence('${id}',this)">
+                    <option value="">— Link related evidence (optional) —</option>
+                </select>
+                <div id="relatedList_${id}" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:5px;"></div>
+            </div>
         </div>
         <div id="hash_${id}" style="display:none;"></div>
         <div id="status_${id}" style="margin-top:8px;font-size:12.5px;color:var(--muted);">Ready to upload</div>
     `;
     document.getElementById('fileQueue').appendChild(div);
     setStep(3);
+    checkAllTypeSelects();
     if(isImg){const r=new FileReader();r.onload=e=>{const t=document.getElementById('thumb_'+id);if(t)t.src=e.target.result;};r.readAsDataURL(file);}
 }
 
@@ -1277,20 +1284,6 @@ function updateQueueInfo(){
 }
 
 // ── confirm + upload ──
-function getGPS(){
-    const btn=document.getElementById('gpsBtn');
-    if(!navigator.geolocation){alert('Geolocation not supported by your browser.');return;}
-    btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Getting location...';
-    navigator.geolocation.getCurrentPosition(pos=>{
-        document.getElementById('gpsLat').value=pos.coords.latitude.toFixed(6);
-        document.getElementById('gpsLon').value=pos.coords.longitude.toFixed(6);
-        btn.disabled=false;btn.innerHTML='<i class="fas fa-location-arrow"></i> Get Current GPS';
-    },err=>{
-        alert('Unable to get location: '+err.message);
-        btn.disabled=false;btn.innerHTML='<i class="fas fa-location-arrow"></i> Get Current GPS';
-    },{enableHighAccuracy:true,timeout:10000});
-}
-
 function uploadAll(){
     if(!selectedCaseId){alert('Please select a case first.');return;}
     if(fileQueue.length===0){alert('Please add at least one file.');return;}
@@ -1331,24 +1324,9 @@ function uploadAll(){
         addRow('Warrant/Order',v('warrantNumber'));
         addRow('Issuing court',v('issuingCourt'));
         addRow('OB Number',v('obNumber'));
-        const gpsLat=v('gpsLat'),gpsLon=v('gpsLon');
-        if(gpsLat&&gpsLon) addRow('GPS',`${gpsLat}, ${gpsLon}`);
-        addRow('Temperature',v('sceneTemp')?v('sceneTemp')+'°C':'');
-        addRow('Environment',v('sceneWeather'));
-        addRow('Relinquished by',v('relinquishedBy')+(v('relinquishedByRole')?' ('+v('relinquishedByRole')+')':''));
-        addRow('Relinquished at',v('relinquishedDateTime'));
-        addRow('Relinquished location',v('relinquishedLocation'));
-        addRow('Received by',v('receivedBy'));
-        addRow('Received at',v('receivedDateTime'));
-        addRow('Transport',v('transportMethod'));
-        addRow('Storage',v('storageLocation'));
-        addRow('Storage conditions',v('storageConditions'));
-        addRow('Photo ref',v('photoRef'));
-        addRow('Video ref',v('videoRef'));
-        addRow('Sketch ref',v('sketchRef'));
+        addRow('Handover',v('transportMethod'));
         addRow('IP address',v('ipAddress'));
         addRow('MAC address',v('macAddress'));
-        addRow('Network SSID',v('networkSSID'));
         addRow('Hostname',v('hostname'));
         const precautions=[];
         if(document.getElementById('handleFragile')?.checked) precautions.push('Fragile');
@@ -1418,27 +1396,9 @@ async function uploadSingle({id,file}){
     fd.append('warrant_number',document.getElementById('warrantNumber')?.value||'');
     fd.append('issuing_court',document.getElementById('issuingCourt')?.value||'');
     fd.append('ob_number',document.getElementById('obNumber')?.value||'');
-    fd.append('gps_lat',document.getElementById('gpsLat')?.value||'');
-    fd.append('gps_lon',document.getElementById('gpsLon')?.value||'');
-    fd.append('scene_temp',document.getElementById('sceneTemp')?.value||'');
-    fd.append('scene_weather',document.getElementById('sceneWeather')?.value||'');
-    fd.append('relinquished_by',document.getElementById('relinquishedBy')?.value||'');
-    fd.append('relinquished_by_role',document.getElementById('relinquishedByRole')?.value||'');
-    fd.append('relinquished_datetime',document.getElementById('relinquishedDateTime')?.value||'');
-    fd.append('relinquished_location',document.getElementById('relinquishedLocation')?.value||'');
-    fd.append('received_by',document.getElementById('receivedBy')?.value||'');
-    fd.append('received_datetime',document.getElementById('receivedDateTime')?.value||'');
     fd.append('transport_method',document.getElementById('transportMethod')?.value||'');
-    fd.append('transport_datetime',document.getElementById('transportDateTime')?.value||'');
-    fd.append('storage_location',document.getElementById('storageLocation')?.value||'');
-    fd.append('storage_conditions',document.getElementById('storageConditions')?.value||'');
-    fd.append('photo_ref',document.getElementById('photoRef')?.value||'');
-    fd.append('video_ref',document.getElementById('videoRef')?.value||'');
-    fd.append('sketch_ref',document.getElementById('sketchRef')?.value||'');
-    fd.append('other_media_ref',document.getElementById('otherMediaRef')?.value||'');
     fd.append('ip_address',document.getElementById('ipAddress')?.value||'');
     fd.append('mac_address',document.getElementById('macAddress')?.value||'');
-    fd.append('network_ssid',document.getElementById('networkSSID')?.value||'');
     fd.append('hostname',document.getElementById('hostname')?.value||'');
     if(document.getElementById('handleFragile')?.checked) fd.append('handle_fragile','1');
     if(document.getElementById('handleEMF')?.checked) fd.append('handle_emf','1');
@@ -1451,6 +1411,9 @@ async function uploadSingle({id,file}){
     // Assignment
     fd.append('assigned_analyst',document.getElementById('assignAnalyst')?.value||'');
     fd.append('assignment_notes',document.getElementById('assignmentNotes')?.value||'');
+    fd.append('examiner_declaration',document.getElementById('examinerDeclaration')?.checked?'1':'0');
+    const linked = linkedEvidence[id] || [];
+    fd.append('linked_evidence',JSON.stringify(linked));
     fd.append('ev_file',file);
     try{
         const res=await fetch('evidence_upload.php',{method:'POST',body:fd});
@@ -1521,24 +1484,9 @@ function showSummary(){
     const warrant=v('warrantNumber');if(warrant!=='—')cocRows.push(['Warrant/Order',warrant]);
     const court=v('issuingCourt');if(court!=='—')cocRows.push(['Issuing court',court]);
     const ob=v('obNumber');if(ob!=='—')cocRows.push(['OB/Case number',ob]);
-    const gpsLat=v('gpsLat'),gpsLon=v('gpsLon');
-    if(gpsLat!=='—'&&gpsLon!=='—')cocRows.push(['GPS',`${gpsLat}, ${gpsLon}`]);
-    const temp=v('sceneTemp');if(temp!=='—')cocRows.push(['Temperature',temp+'°C']);
-    const weather=v('sceneWeather');if(weather!=='—')cocRows.push(['Environment',weather]);
-    const relBy=v('relinquishedBy');if(relBy!=='—'){const relRole=v('relinquishedByRole');cocRows.push(['Relinquished by',relBy+(relRole!=='—'?' ('+relRole+')':'')]);}
-    const relDt=v('relinquishedDateTime');if(relDt!=='—')cocRows.push(['Relinquished at',relDt]);
-    const relLoc=v('relinquishedLocation');if(relLoc!=='—')cocRows.push(['Relinquished location',relLoc]);
-    cocRows.push(['Received by',v('receivedBy')]);
-    const recDt=v('receivedDateTime');if(recDt!=='—')cocRows.push(['Received at',recDt]);
-    const trans=v('transportMethod');if(trans!=='—')cocRows.push(['Transport',trans]);
-    const store=v('storageLocation');if(store!=='—')cocRows.push(['Storage',store]);
-    const storeCond=v('storageConditions');if(storeCond!=='—')cocRows.push(['Storage conditions',storeCond]);
-    const photo=v('photoRef');if(photo!=='—')cocRows.push(['Photo ref',photo]);
-    const vid=v('videoRef');if(vid!=='—')cocRows.push(['Video ref',vid]);
-    const sketch=v('sketchRef');if(sketch!=='—')cocRows.push(['Sketch ref',sketch]);
+    const trans=v('transportMethod');if(trans!=='—')cocRows.push(['Handover',trans]);
     const ip=v('ipAddress');if(ip!=='—')cocRows.push(['IP address',ip]);
     const mac=v('macAddress');if(mac!=='—')cocRows.push(['MAC address',mac]);
-    const ssid=v('networkSSID');if(ssid!=='—')cocRows.push(['Network SSID',ssid]);
     const host=v('hostname');if(host!=='—')cocRows.push(['Hostname',host]);
     const precautions=[];
     if(document.getElementById('handleFragile')?.checked) precautions.push('Fragile');

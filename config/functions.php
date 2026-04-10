@@ -20,7 +20,7 @@ function generate_strong_password($length = 8) {
     $password .= $numbers[random_int(0, strlen($numbers) - 1)];
     
     $all = $lowercase . $uppercase . $numbers;
-    for ($i = 3; $i < 6; $i++) {
+    for ($i = 3; $i < $length; $i++) {
         $password .= $all[random_int(0, strlen($all) - 1)];
     }
     
@@ -300,22 +300,27 @@ function can_see_case($pdo, $case_id, $user_id, $role) {
 
 function case_access_sql($user_id, $role) {
     if ($role === 'admin') return '';
-    return " AND (c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id = $user_id)
-                  OR c.created_by = $user_id
-                  OR c.assigned_to = $user_id)";
+    if ($role === 'investigator') {
+        return " AND (c.created_by = $user_id OR c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id = $user_id))";
+    }
+    return " AND c.id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id = $user_id)";
 }
 
 function evidence_access_sql($user_id, $role) {
     if ($role === 'admin') return '';
-    return " AND (e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id = $user_id)
-                  OR e.uploaded_by = $user_id
-                  OR e.current_custodian = $user_id)";
+    if ($role === 'investigator') {
+        return " AND (e.uploaded_by = $user_id OR e.current_custodian = $user_id OR e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id = $user_id))";
+    }
+    return " AND e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id = $user_id)";
 }
 
-function grant_case_access($pdo, $case_id, $user_id, $granted_by) {
+function grant_case_access($pdo, $case_id, $user_id, $granted_by, $access_role = 'analyst', $notes = null) {
     try {
-        $pdo->prepare("INSERT IGNORE INTO case_access (case_id, user_id, granted_by) VALUES (?, ?, ?)")
-            ->execute([$case_id, $user_id, $granted_by]);
+        $pdo->prepare("
+            INSERT INTO case_access (case_id, user_id, granted_by, access_role, notes) 
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE access_role = VALUES(access_role), notes = VALUES(notes)
+        ")->execute([$case_id, $user_id, $granted_by, $access_role, $notes]);
     } catch (Exception $e) {
         error_log("grant_case_access failed: " . $e->getMessage());
     }
@@ -530,18 +535,39 @@ function create_download_token($pdo, $evidence_id, $user_id, $reason = '', $hour
     if ($hours === null) $hours = DOWNLOAD_TOKEN_EXPIRY;
     $token = bin2hex(random_bytes(32));
     $expires = date('Y-m-d H:i:s', strtotime("+{$hours} hours"));
-    $stmt = $pdo->prepare("INSERT INTO download_tokens (token, evidence_id, created_by, expires_at, download_reason) VALUES (?,?,?,?,?)");
-    $stmt->execute([$token, $evidence_id, $user_id, $expires, $reason]);
+    
+    // Get evidence details for the token
+    $ev = $pdo->prepare("SELECT file_path, file_name, evidence_number, sha256_hash, md5_hash FROM evidence WHERE id=?");
+    $ev->execute([$evidence_id]);
+    $ev = $ev->fetch();
+    
+    $stmt = $pdo->prepare("INSERT INTO download_tokens (token, evidence_id, file_path, file_name, evidence_number, sha256_hash, md5_hash, created_by, intended_user_id, expires_at, download_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+    $stmt->execute([$token, $evidence_id, $ev['file_path'] ?? '', $ev['file_name'] ?? '', $ev['evidence_number'] ?? '', $ev['sha256_hash'] ?? '', $ev['md5_hash'] ?? '', $user_id, $user_id, $expires, $reason]);
     return $token;
 }
 
-function validate_download_token($pdo, $token) {
-    $stmt = $pdo->prepare("SELECT dt.*, e.file_path, e.file_name, e.title as evidence_title
+function validate_download_token($pdo, $token, $user_id = null) {
+    $stmt = $pdo->prepare("
+        SELECT dt.*, u.full_name AS creator_name
         FROM download_tokens dt
-        JOIN evidence e ON e.id = dt.evidence_id
-        WHERE dt.token = ? AND dt.is_used = 0 AND dt.expires_at > NOW()");
+        JOIN users u ON u.id = dt.created_by
+        WHERE dt.token = ? AND dt.is_used = 0 AND dt.expires_at > NOW()
+    ");
     $stmt->execute([$token]);
-    return $stmt->fetch();
+    $token_data = $stmt->fetch();
+    
+    if (!$token_data) return false;
+    
+    // Verify user is authorized to use this token
+    if ($user_id !== null) {
+        $is_creator = (int)$token_data['created_by'] === (int)$user_id;
+        $is_intended = !empty($token_data['intended_user_id']) && (int)$token_data['intended_user_id'] === (int)$user_id;
+        if (!$is_creator && !$is_intended) {
+            return false;
+        }
+    }
+    
+    return $token_data;
 }
 
 // ── Notifications ────────────────────────────────────────────
@@ -587,6 +613,11 @@ function handle_evidence_upload($file, $evidence_number) {
 
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime = $finfo->file($file['tmp_name']);
+
+    if (!in_array($mime, $allowed_types)) {
+        @unlink($file['tmp_name']);
+        return ['success' => false, 'error' => 'File type not permitted.'];
+    }
 
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     $safe_name = preg_replace('/[^a-zA-Z0-9_\-]/', '_', pathinfo($file['name'], PATHINFO_FILENAME));
@@ -763,33 +794,35 @@ function send_password_reset_email($email, $token) {
     $headers .= "Content-type: text/html; charset=UTF-8\r\n";
     $headers .= "From: noreply@digicustody.go.ke\r\n";
 
-    return mail($email, $subject, $message, $headers);
+    return send_email($email, $subject, $message);
 }
 
-function send_email_via_resend($to, $subject, $html, $from_email = 'onboarding@resend.dev', $from_name = 'DigiCustody') {
-    $api_key = defined('RESEND_API_KEY') ? RESEND_API_KEY : 're_gcGS4i57_7BXJz3Qoz4g8fRxyFLesqTTn';
+function send_email($to, $subject, $html) {
+    require_once __DIR__ . '/../vendor/autoload.php';
     
-    $data = [
-        'from' => "$from_name <$from_email>",
-        'to' => [$to],
-        'subject' => $subject,
-        'html' => $html
-    ];
+    $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
     
-    $ch = curl_init('https://api.resend.com/emails');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: Bearer ' . $api_key,
-        'Content-Type: application/json'
-    ]);
-    
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    return $http_code >= 200 && $http_code < 300;
+    try {
+        $mail->isSMTP();
+        $mail->Host = 'smtp.gmail.com';
+        $mail->SMTPAuth = true;
+        $mail->Username = GMAIL_USER;
+        $mail->Password = GMAIL_APP_PASSWORD;
+        $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port = 587;
+        
+        $mail->setFrom(GMAIL_USER, 'DigiCustody');
+        $mail->addAddress($to);
+        $mail->isHTML(true);
+        $mail->Subject = $subject;
+        $mail->Body = $html;
+        
+        $mail->send();
+        return true;
+    } catch (\Exception $e) {
+        error_log("PHPMailer Error: " . $e->getMessage());
+        return false;
+    }
 }
 
 function send_account_approval_email($email, $full_name, $username, $password, $role) {
@@ -819,7 +852,7 @@ function send_account_approval_email($email, $full_name, $username, $password, $
     </body>
     </html>";
 
-    return send_email_via_resend($email, $subject, $html);
+    return send_email($email, $subject, $html);
 }
 
 // ── Two-Factor Authentication ─────────────────────────────────
@@ -837,7 +870,7 @@ function get_2fa_qrcode_url($email, $secret, $issuer = 'DigiCustody') {
     $otpauth = 'otpauth://totp/' . rawurlencode($issuer . ':' . $email) . '?secret=' . $secret . '&issuer=' . rawurlencode($issuer) . '&algorithm=SHA1&digits=6&period=30';
     
     $qrcode = new \chillerlan\QRCode\QRCode(new \chillerlan\QRCode\QROptions([
-        'outputType' => 'png',
+        'outputInterface' => \chillerlan\QRCode\Output\QRGdImagePNG::class,
         'scale' => 5,
         'imageBase64' => true,
     ]));
@@ -1013,12 +1046,11 @@ function parse_user_agent($ua) {
 }
 
 function set_trusted_device_cookie($token, $days = 30) {
-    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
     setcookie('trusted_device', $token, [
         'expires' => time() + ($days * 86400),
         'path' => '/',
         'domain' => '',
-        'secure' => $secure,
+        'secure' => false,
         'httponly' => true,
         'samesite' => 'Lax'
     ]);
@@ -1108,13 +1140,18 @@ function log_security_event($pdo, $event_type, $details = []) {
 }
 
 function validate_evidence_access($pdo, $evidence_id, $user_id, $role) {
-    $stmt = $pdo->prepare("SELECT id, current_custodian, uploaded_by, status FROM evidence WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, case_id, current_custodian, uploaded_by, status FROM evidence WHERE id = ?");
     $stmt->execute([$evidence_id]);
     $evidence = $stmt->fetch();
     if (!$evidence) return ['allowed' => false, 'reason' => 'Evidence not found.'];
     if ($role === 'admin') return ['allowed' => true, 'evidence' => $evidence];
-    if ((int)$evidence['current_custodian'] === $user_id) return ['allowed' => true, 'evidence' => $evidence];
-    if ((int)$evidence['uploaded_by'] === $user_id) return ['allowed' => true, 'evidence' => $evidence];
+    if ($role === 'investigator') return ['allowed' => true, 'evidence' => $evidence];
+    if ($role === 'analyst') {
+        $stmt2 = $pdo->prepare("SELECT 1 FROM case_access WHERE case_id = ? AND user_id = ?");
+        $stmt2->execute([$evidence['case_id'], $user_id]);
+        if ($stmt2->fetchColumn()) return ['allowed' => true, 'evidence' => $evidence];
+        return ['allowed' => false, 'reason' => 'Access denied.'];
+    }
     return ['allowed' => false, 'reason' => 'Access denied.'];
 }
 // ── System Settings ─────────────────────────────────────────

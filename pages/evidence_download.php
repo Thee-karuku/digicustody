@@ -7,19 +7,31 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+
+$is_token_download = isset($_GET['token']);
+require_login(); // Always require authentication, even for token downloads
 
 $page_title = 'Download Evidence';
-$uid  = $_SESSION['user_id'];
-$role = $_SESSION['role'];
+$uid  = $_SESSION['user_id'] ?? 0;
+$role = $_SESSION['role'] ?? '';
 
-// Analysts can only download evidence assigned to them (via case_access)
-if (!is_admin() && isset($_GET['id'])) {
+// Analysts need case access check; investigators need uploader/custodian/case_access check
+if ($role === 'analyst' && isset($_GET['id'])) {
     $ev_id = (int)$_GET['id'];
     $check = $pdo->prepare("
         SELECT e.id FROM evidence e
-        WHERE e.id=? AND (e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
-            OR e.uploaded_by=? OR e.current_custodian=?)
+        WHERE e.id=? AND e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
+    ");
+    $check->execute([$ev_id, $uid]);
+    if (!$check->fetch()) {
+        header('Location: ../dashboard.php?error=access_denied');
+        exit;
+    }
+} elseif ($role === 'investigator' && isset($_GET['id'])) {
+    $ev_id = (int)$_GET['id'];
+    $check = $pdo->prepare("
+        SELECT e.id FROM evidence e
+        WHERE e.id=? AND (e.uploaded_by=? OR e.current_custodian=? OR e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?))
     ");
     $check->execute([$ev_id, $uid, $uid, $uid]);
     if (!$check->fetch()) {
@@ -37,10 +49,22 @@ if (isset($_GET['token'])) {
         die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ Too Many Requests</h2><p style="color:#6b82a0;margin-top:10px">Please wait before downloading more files.</p></div>');
     }
     
-    $td    = validate_download_token($pdo, $token);
+    $td    = validate_download_token($pdo, $token, $uid);
 
     if (!$td) {
-        die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ Invalid or Expired Token</h2><p style="color:#6b82a0;margin-top:10px">This download link has expired or already been used.</p><a href="evidence.php" style="color:#c9a84c;margin-top:20px;display:inline-block">← Back to Evidence</a></div>');
+        log_security_event($pdo, $uid, 'unauthorized_token_download', 'User attempted to use invalid, expired, or unauthorized token', $_SERVER['REMOTE_ADDR'] ?? '');
+        die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ Invalid or Expired Token</h2><p style="color:#6b82a0;margin-top:10px">This download link has expired, already been used, or you are not authorized to use it.</p><a href="evidence.php" style="color:#c9a84c;margin-top:20px;display:inline-block">← Back to Evidence</a></div>');
+    }
+
+    // Re-verify analyst access at download time (in case access was revoked after token creation)
+    if ($role === 'analyst') {
+        $stmt = $pdo->prepare("SELECT 1 FROM case_access WHERE case_id = (SELECT case_id FROM evidence WHERE id = ?) AND user_id = ?");
+        $stmt->execute([$td['evidence_id'], $uid]);
+        if (!$stmt->fetchColumn()) {
+            log_security_event($pdo, $uid, 'access_revoked_download', 'Analyst attempted to download evidence after access was revoked', $_SERVER['REMOTE_ADDR'] ?? '');
+            header('Location: ../dashboard.php?error=access_denied&msg=Access+revoked.+You+no+longer+have+access+to+this+evidence.');
+            exit;
+        }
     }
 
     $file_path = $td['file_path'];
@@ -86,20 +110,29 @@ if (isset($_GET['token'])) {
         }
     }
 
+    // Get user info from token
+    $user_stmt = $pdo->prepare("SELECT username, role FROM users WHERE id=?");
+    $user_stmt->execute([$td['created_by']]);
+    $token_user = $user_stmt->fetch();
+    $download_username = $token_user['username'] ?? 'unknown';
+    $download_role = $token_user['role'] ?? 'unknown';
+
     // Mark token as used
     $pdo->prepare("UPDATE download_tokens SET is_used=1, used_at=NOW() WHERE token=?")
         ->execute([$token]);
 
     // Audit log
-    audit_log($pdo, $uid, $_SESSION['username'], $role,
+    audit_log($pdo, $td['created_by'], $download_username, $download_role,
         'evidence_downloaded', 'evidence', $td['evidence_id'], '',
         "Evidence downloaded via token. File: {$td['file_name']}",
         $_SERVER['REMOTE_ADDR'] ?? '');
 
     // Log to download_history
-    log_download($pdo, $td['evidence_id'], $uid, $td['id'], $td['download_reason'] ?? '');
+    log_download($pdo, $td['evidence_id'], $td['created_by'], $td['id'], $td['download_reason'] ?? '');
 
     // Serve file
+    while (ob_get_level()) { ob_end_clean(); }
+    
     $finfo    = new finfo(FILEINFO_MIME_TYPE);
     $mime     = $finfo->file($file_path);
     $filename = basename($td['file_name']);
@@ -152,7 +185,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $token_data = [
                 'token'      => $token,
                 'expires_in' => $hours,
-                'url'        => BASE_URL . 'pages/evidence_download.php?token=' . $token,
+                'url'        => '?token=' . $token,
                 'reason'     => $reason,
             ];
         }

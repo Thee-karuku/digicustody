@@ -44,13 +44,17 @@ $type_icons = [
 $where  = ['1=1'];
 $params = [];
 
-// Analysts are scoped to cases they are assigned to
-// Investigators and Admins see all evidence
+// Analysts are scoped to cases they have access to via case_access
+// Investigators are scoped to evidence they uploaded, are custodian of, or have case_access
+// Admins see all evidence
 if ($role === 'analyst') {
-    $where[] = "(e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
-                OR e.case_id IN (SELECT id FROM cases WHERE assigned_analyst=?)
-                OR e.uploaded_by=? OR e.current_custodian=?)";
-    $params = array_merge($params, [$uid, $uid, $uid, $uid]);
+    $where[] = "e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)";
+    $params[] = $uid;
+} elseif ($role === 'investigator') {
+    $where[] = "(e.uploaded_by=? OR e.current_custodian=? OR e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?))";
+    $params[] = $uid;
+    $params[] = $uid;
+    $params[] = $uid;
 }
 
 if ($search !== '') {
