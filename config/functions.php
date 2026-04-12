@@ -213,7 +213,7 @@ function record_login_attempt($pdo, $username, $ip, $successful = false) {
         $stmt = $pdo->prepare("INSERT INTO login_attempts (ip_address, username, successful) VALUES (?, ?, ?)");
         $stmt->execute([$ip, $username, $successful ? 1 : 0]);
     } catch (Exception $e) {
-        error_log("Failed to record login attempt: " . $e->getMessage());
+        log_error("Failed to record login attempt", ['error' => $e->getMessage()]);
     }
 }
 
@@ -389,7 +389,7 @@ function grant_case_access($pdo, $case_id, $user_id, $granted_by, $access_role =
             ON DUPLICATE KEY UPDATE access_role = VALUES(access_role), notes = VALUES(notes)
         ")->execute([$case_id, $user_id, $granted_by, $access_role, $notes]);
     } catch (Exception $e) {
-        error_log("grant_case_access failed: " . $e->getMessage());
+        log_error("grant_case_access failed", ['error' => $e->getMessage()]);
     }
 }
 
@@ -412,7 +412,7 @@ function assign_analyst_to_evidence($pdo, $evidence_id, $analyst_id, $assigned_b
         ")->execute([$analyst_id, $notes, $evidence_id]);
         return ['success' => true];
     } catch (Exception $e) {
-        error_log("assign_analyst_to_evidence failed: " . $e->getMessage());
+        log_error("assign_analyst_to_evidence failed", ['error' => $e->getMessage()]);
         return ['success' => false, 'error' => 'Database error'];
     }
 }
@@ -422,7 +422,7 @@ function revoke_case_access($pdo, $case_id, $user_id) {
         $pdo->prepare("DELETE FROM case_access WHERE case_id = ? AND user_id = ?")
             ->execute([$case_id, $user_id]);
     } catch (Exception $e) {
-        error_log("revoke_case_access failed: " . $e->getMessage());
+        log_error("revoke_case_access failed", ['error' => $e->getMessage()]);
     }
 }
 
@@ -453,7 +453,7 @@ function log_download($pdo, $evidence_id, $user_id, $token_id = null, $reason = 
                 $reason
             ]);
     } catch (Exception $e) {
-        error_log("log_download failed: " . $e->getMessage());
+        log_error("log_download failed", ['error' => $e->getMessage()]);
     }
 }
 
@@ -540,7 +540,7 @@ function audit_log($pdo, $user_id, $username, $role, $action_type,
         $pdo->prepare("UPDATE audit_logs SET chain_hash = ? WHERE id = ?")->execute([$new_chain_hash, $new_id]);
         
     } catch (Exception $e) {
-        error_log("Audit log failed: " . $e->getMessage());
+        log_error("Audit log failed", ['error' => $e->getMessage()]);
     }
 }
 
@@ -755,7 +755,7 @@ function send_notification($pdo, $user_id, $title, $message, $type = 'info', $re
         $stmt = $pdo->prepare("INSERT INTO notifications (user_id, title, message, type, related_type, related_id) VALUES (?,?,?,?,?,?)");
         $stmt->execute([$user_id, $title, $message, $type, $related_type, $related_id]);
     } catch (Exception $e) {
-        error_log("Notification failed: " . $e->getMessage());
+        log_error("Notification failed", ['error' => $e->getMessage()]);
     }
 }
 
@@ -1076,7 +1076,7 @@ function send_email($to, $subject, $html) {
         $mail->send();
         return true;
     } catch (\Exception $e) {
-        error_log("PHPMailer Error: " . $e->getMessage());
+        log_error("PHPMailer Error", ['error' => $e->getMessage()]);
         return false;
     }
 }
@@ -1391,7 +1391,7 @@ function log_security_event($pdo, $event_type, $details = []) {
                 json_encode($details)
             ]);
     } catch (Exception $e) {
-        error_log("Security event logging failed: " . $e->getMessage());
+        log_error("Security event logging failed", ['error' => $e->getMessage()]);
     }
 }
 

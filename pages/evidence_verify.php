@@ -4,6 +4,7 @@
  * Save to: /var/www/html/digicustody/pages/evidence_verify.php
  */
 require_once __DIR__."/../config/functions.php";
+require_once __DIR__."/../config/logger.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
@@ -58,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verify_csrf($_POST['csrf_token']??'
         }
         if (file_exists($file_path)) {
             if ($file_path !== $ev['file_path']) {
-                error_log("evidence_verify: Using fallback path for id $id: $file_path");
+                log_warning("evidence_verify: Using fallback path", ['evidence_id' => $id, 'path' => $file_path]);
             }
             $cur_sha256 = hash_file('sha256', $file_path);
             $cur_sha3_256 = hash_file('sha3-256', $file_path);

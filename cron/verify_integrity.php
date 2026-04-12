@@ -49,6 +49,7 @@ define('BASE_PATH', dirname(__DIR__));
 
 require_once BASE_PATH . '/config/db.php';
 require_once BASE_PATH . '/config/functions.php';
+require_once BASE_PATH . '/config/logger.php';
 
 echo "[" . date('Y-m-d H:i:s') . "] Starting evidence integrity verification...\n";
 
@@ -236,7 +237,7 @@ function flag_evidence($pdo, $evidence_id, $reason, $details) {
         $stmt->execute([$reason, $details, $evidence_id]);
         return true;
     } catch (Exception $e) {
-        error_log("Failed to flag evidence $evidence_id: " . $e->getMessage());
+        log_error("Failed to flag evidence", ['evidence_id' => $evidence_id, 'error' => $e->getMessage()]);
         return false;
     }
 }

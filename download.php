@@ -9,6 +9,7 @@
  */
 
 require_once __DIR__ . '/config/functions.php';
+require_once __DIR__ . '/config/logger.php';
 require_once __DIR__ . '/config/db.php';
 
 set_secure_session_config();
@@ -59,7 +60,7 @@ try {
     $pdo->commit();
 } catch (Exception $e) {
     $pdo->rollBack();
-    error_log("Download token redemption error: " . $e->getMessage());
+    log_error("Download token redemption error", ['error' => $e->getMessage()]);
     http_response_code(500);
     die('An error occurred processing your download.');
 }
