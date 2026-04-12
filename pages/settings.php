@@ -181,7 +181,7 @@ $csrf = csrf_token();
                 <div class="info-row"><span class="info-label">PHP Version</span><span class="info-value"><?= PHP_VERSION ?></span></div>
                 <div class="info-row"><span class="info-label">Database Version</span><span class="info-value"><?= e($db_version) ?></span></div>
                 <div class="info-row"><span class="info-label">Server Software</span><span class="info-value"><?= e($_SERVER['SERVER_SOFTWARE'] ?? 'Unknown') ?></span></div>
-                <div class="info-row"><span class="info-label">Upload Directory</span><span class="info-value" style="font-family:'Courier New',monospace;font-size:12px">/var/www/html/digicustody/uploads/</span></div>
+                <div class="info-row"><span class="info-label">Upload Directory</span><span class="info-value" style="font-family:'Courier New',monospace;font-size:12px">/var/digicustody/evidence/</span></div>
                 <div class="info-row"><span class="info-label">Max Upload Size (PHP)</span><span class="info-value"><?= ini_get('upload_max_filesize') ?></span></div>
                 <div class="info-row"><span class="info-label">Memory Limit</span><span class="info-value"><?= ini_get('memory_limit') ?></span></div>
             </div>

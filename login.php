@@ -42,9 +42,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
                     
                     // Check if 2FA is enabled
                     if ($user['two_factor_enabled'] == 1) {
-                        // Check if user has skip 2FA enabled for this account
-                        if (!empty($user['skip_2fa_until']) && strtotime($user['skip_2fa_until']) > time()) {
-                            // Skip 2FA for remembered account
+                        // Check if user has a valid trusted device cookie
+                        $trusted_token = $_COOKIE['trusted_device'] ?? null;
+                        $device_valid = false;
+                        if ($trusted_token) {
+                            $device_valid = validate_trusted_device($pdo, $user['id'], $trusted_token);
+                        }
+                        if ($device_valid) {
+                            // Skip 2FA for trusted device
                             secure_session_regenerate();
                             $_SESSION['user_id']       = $user['id'];
                             $_SESSION['username']      = $user['username'];
@@ -53,8 +58,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
                             $_SESSION['email']         = $user['email'];
                             $_SESSION['last_activity'] = time();
                             $_SESSION['2fa_verified']  = true;
+                            $_SESSION['require_2fa']   = true;
                             $pdo->prepare("UPDATE users SET last_login=NOW() WHERE id=?")->execute([$user['id']]);
-                            audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'Login via remembered account (2FA skipped)',$ip,$_SERVER['HTTP_USER_AGENT']??'');
+                            audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'Login via trusted device (2FA skipped)',$ip,$_SERVER['HTTP_USER_AGENT']??'');
                             header('Location: dashboard.php'); exit;
                         }
                         $_SESSION['pending_2fa_user'] = $user['id'];
@@ -74,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
                     $_SESSION['role']          = $user['role'];
                     $_SESSION['email']         = $user['email'];
                     $_SESSION['last_activity'] = time();
+                    $_SESSION['require_2fa']   = ($user['two_factor_enabled'] == 1);
                     $pdo->prepare("UPDATE users SET last_login=NOW() WHERE id=?")->execute([$user['id']]);
                     audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'User logged in',$ip,$_SERVER['HTTP_USER_AGENT']??'');
                     header('Location: dashboard.php'); exit;

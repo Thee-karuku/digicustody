@@ -13,14 +13,16 @@ function generate_strong_password($length = 8) {
     $lowercase = 'abcdefghijklmnopqrstuvwxyz';
     $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
     $numbers = '0123456789';
+    $special = '!@#$%^&*()';
     
     $password = '';
     $password .= $lowercase[random_int(0, strlen($lowercase) - 1)];
     $password .= $uppercase[random_int(0, strlen($uppercase) - 1)];
     $password .= $numbers[random_int(0, strlen($numbers) - 1)];
+    $password .= $special[random_int(0, strlen($special) - 1)];
     
-    $all = $lowercase . $uppercase . $numbers;
-    for ($i = 3; $i < $length; $i++) {
+    $all = $lowercase . $uppercase . $numbers . $special;
+    for ($i = 4; $i < $length; $i++) {
         $password .= $all[random_int(0, strlen($all) - 1)];
     }
     
@@ -34,6 +36,7 @@ function set_security_headers() {
     header('X-XSS-Protection: 1; mode=block');
     header('X-Robots-Tag: noindex, nofollow');
     header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
     header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdnjs.cloudflare.com https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:;");
     header_remove('X-Powered-By');
 }
@@ -42,7 +45,7 @@ function set_secure_session_config() {
     if (session_status() === PHP_SESSION_NONE) {
         // Secure cookie settings
         ini_set('session.cookie_httponly', 1);
-        ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 1 : 0);
+        ini_set('session.cookie_secure', 1);
         ini_set('session.cookie_samesite', 'Strict');
         
         // Session security
@@ -241,7 +244,7 @@ function get_lockout_remaining($pdo, $username, $ip) {
 }
 
 // ── Session Security ─────────────────────────────────────────
-function require_login() {
+function require_login($pdo = null) {
     static $headers_applied = false;
     if (!$headers_applied) {
         set_security_headers();
@@ -258,6 +261,22 @@ function require_login() {
         header('Location: ' . BASE_URL . 'login.php?msg=timeout');
         exit;
     }
+    // 2FA verification check - require 2FA for users with 2FA enabled
+    if (!empty($_SESSION['require_2fa']) && empty($_SESSION['2fa_verified'])) {
+        header('Location: ' . BASE_URL . 'verify_2fa.php?reason=required');
+        exit;
+    }
+    // Additional check: verify 2FA status from database if session was hijacked
+    // This prevents bypassing 2FA by manually setting session variables
+    if ($pdo && !empty($_SESSION['user_id']) && empty($_SESSION['2fa_verified'])) {
+        $stmt = $pdo->prepare("SELECT two_factor_enabled FROM users WHERE id = ?");
+        $stmt->execute([$_SESSION['user_id']]);
+        $user = $stmt->fetch();
+        if ($user && $user['two_factor_enabled'] == 1) {
+            header('Location: ' . BASE_URL . 'verify_2fa.php?reason=required');
+            exit;
+        }
+    }
     $_SESSION['last_activity'] = time();
 }
 
@@ -273,6 +292,23 @@ function require_role($roles) {
 function is_admin()        { return isset($_SESSION['role']) && $_SESSION['role'] === 'admin'; }
 function is_investigator() { return isset($_SESSION['role']) && $_SESSION['role'] === 'investigator'; }
 function is_analyst()      { return isset($_SESSION['role']) && $_SESSION['role'] === 'analyst'; }
+
+// ── Evidence Status Transitions ───────────────────────────────
+function can_change_evidence_status($from, $to) {
+    // Flagged status can only be exited via clear_flag action, not through this function
+    if ($from === 'flagged' || $to === 'flagged') {
+        return false;
+    }
+    
+    $valid_transitions = [
+        'collected'    => ['in_analysis'],
+        'in_analysis' => ['transferred', 'archived'],
+        'transferred' => ['in_analysis'],
+        'archived'   => ['in_analysis'],
+    ];
+    
+    return isset($valid_transitions[$from]) && in_array($to, $valid_transitions[$from]);
+}
 
 // ── Role-based Capability Gates ──────────────────────────────
 // Admin & Investigator: full operational access
@@ -296,6 +332,37 @@ function can_see_case($pdo, $case_id, $user_id, $role) {
     $stmt = $pdo->prepare("SELECT 1 FROM case_access WHERE case_id = ? AND user_id = ?");
     $stmt->execute([$case_id, $user_id]);
     return (bool)$stmt->fetchColumn();
+}
+
+function user_can_access_case($pdo, $uid, $role, $case_id) {
+    $case_id = (int)$case_id;
+    if (!$case_id) return false;
+    if ($role === 'admin') return true;
+    if ($role === 'investigator') {
+        $stmt = $pdo->prepare("SELECT 1 FROM cases WHERE id = ? AND created_by = ?");
+        $stmt->execute([$case_id, $uid]);
+        if ($stmt->fetchColumn()) return true;
+        $stmt = $pdo->prepare("SELECT 1 FROM case_access WHERE case_id = ? AND user_id = ?");
+        $stmt->execute([$case_id, $uid]);
+        return (bool)$stmt->fetchColumn();
+    }
+    if ($role === 'analyst') {
+        $stmt = $pdo->prepare("SELECT 1 FROM case_access WHERE case_id = ? AND user_id = ?");
+        $stmt->execute([$case_id, $uid]);
+        return (bool)$stmt->fetchColumn();
+    }
+    return false;
+}
+
+function user_can_access_evidence($pdo, $uid, $role, $evidence_id) {
+    $evidence_id = (int)$evidence_id;
+    if (!$evidence_id) return false;
+    if ($role === 'admin') return true;
+    $stmt = $pdo->prepare("SELECT case_id FROM evidence WHERE id = ?");
+    $stmt->execute([$evidence_id]);
+    $case_id = $stmt->fetchColumn();
+    if (!$case_id) return false;
+    return user_can_access_case($pdo, $uid, $role, $case_id);
 }
 
 function case_access_sql($user_id, $role) {
@@ -323,6 +390,30 @@ function grant_case_access($pdo, $case_id, $user_id, $granted_by, $access_role =
         ")->execute([$case_id, $user_id, $granted_by, $access_role, $notes]);
     } catch (Exception $e) {
         error_log("grant_case_access failed: " . $e->getMessage());
+    }
+}
+
+function assign_analyst_to_evidence($pdo, $evidence_id, $analyst_id, $assigned_by, $notes = null) {
+    try {
+        $stmt = $pdo->prepare("SELECT status FROM evidence WHERE id = ?");
+        $stmt->execute([$evidence_id]);
+        $current_status = $stmt->fetchColumn();
+        if (!$current_status) {
+            return ['success' => false, 'error' => 'Evidence not found'];
+        }
+        if (!can_change_evidence_status($current_status, 'in_analysis')) {
+            return ['success' => false, 'error' => 'Cannot change status from ' . $current_status . ' to in_analysis'];
+        }
+        $pdo->prepare("
+            UPDATE evidence 
+            SET assigned_analyst = ?, assignment_notes = ?, assigned_at = NOW(), 
+                analysis_status = 'assigned', status = 'in_analysis' 
+            WHERE id = ?
+        ")->execute([$analyst_id, $notes, $evidence_id]);
+        return ['success' => true];
+    } catch (Exception $e) {
+        error_log("assign_analyst_to_evidence failed: " . $e->getMessage());
+        return ['success' => false, 'error' => 'Database error'];
     }
 }
 
@@ -407,6 +498,13 @@ function audit_log($pdo, $user_id, $username, $role, $action_type,
                    $target_type=null, $target_id=null, $target_label=null,
                    $description='', $ip=null, $ua=null, $extra=null) {
     try {
+        $last_chain_hash = null;
+        
+        $last_row = $pdo->query("SELECT chain_hash FROM audit_logs ORDER BY id DESC LIMIT 1")->fetch();
+        if ($last_row) {
+            $last_chain_hash = $last_row['chain_hash'];
+        }
+        
         $stmt = $pdo->prepare("INSERT INTO audit_logs
             (user_id, username, user_role, action_type, target_type, target_id, target_label,
              description, ip_address, user_agent, session_id, extra_data)
@@ -420,9 +518,66 @@ function audit_log($pdo, $user_id, $username, $role, $action_type,
             session_id(),
             $extra ? json_encode($extra) : null
         ]);
+        
+        $new_id = $pdo->lastInsertId();
+        
+        $row_data = $pdo->query("SELECT * FROM audit_logs WHERE id = $new_id")->fetch();
+        $chain_data = 
+            $row_data['id'] . 
+            $row_data['user_id'] . 
+            $row_data['username'] . 
+            $row_data['user_role'] . 
+            $row_data['action_type'] . 
+            ($row_data['target_type'] ?? '') . 
+            ($row_data['target_id'] ?? '') . 
+            ($row_data['target_label'] ?? '') . 
+            $row_data['description'] . 
+            $row_data['ip_address'] . 
+            $row_data['created_at'];
+        
+        $new_chain_hash = hash('sha256', $chain_data . ($last_chain_hash ?? ''));
+        
+        $pdo->prepare("UPDATE audit_logs SET chain_hash = ? WHERE id = ?")->execute([$new_chain_hash, $new_id]);
+        
     } catch (Exception $e) {
         error_log("Audit log failed: " . $e->getMessage());
     }
+}
+
+function verify_audit_chain($pdo) {
+    $results = ['valid' => true, 'total' => 0, 'errors' => []];
+    
+    $rows = $pdo->query("SELECT * FROM audit_logs ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+    $results['total'] = count($rows);
+    
+    $previous_hash = null;
+    
+    foreach ($rows as $row) {
+        $chain_data = 
+            $row['id'] . 
+            $row['user_id'] . 
+            $row['username'] . 
+            $row['user_role'] . 
+            $row['action_type'] . 
+            ($row['target_type'] ?? '') . 
+            ($row['target_id'] ?? '') . 
+            ($row['target_label'] ?? '') . 
+            $row['description'] . 
+            $row['ip_address'] . 
+            $row['created_at'];
+        
+        $expected_hash = hash('sha256', $chain_data . ($previous_hash ?? ''));
+        $stored_hash = $row['chain_hash'] ?? '';
+        
+        if ($expected_hash !== $stored_hash) {
+            $results['valid'] = false;
+            $results['errors'][] = "Chain broken at row ID {$row['id']}: expected $expected_hash, got $stored_hash";
+        }
+        
+        $previous_hash = $stored_hash;
+    }
+    
+    return $results;
 }
 
 // ── Hash Generation ──────────────────────────────────────────
@@ -430,18 +585,42 @@ function generate_file_hashes($filepath) {
     if (!file_exists($filepath)) return null;
     return [
         'sha256'    => hash_file('sha256', $filepath),
-        'md5'       => hash_file('md5', $filepath),
+        'sha3_256'  => hash_file('sha3-256', $filepath),
         'file_size' => filesize($filepath),
         'timestamp' => date('Y-m-d H:i:s'),
     ];
 }
 
-function verify_file_integrity($filepath, $original_sha256, $original_md5) {
+function verify_file_integrity($filepath, $original_sha256, $original_sha3_256) {
     if (!file_exists($filepath)) return 'file_missing';
     $current_sha256 = hash_file('sha256', $filepath);
-    $current_md5    = hash_file('md5', $filepath);
-    if ($current_sha256 === $original_sha256 && $current_md5 === $original_md5) return 'intact';
+    $current_sha3_256 = hash_file('sha3-256', $filepath);
+    if ($current_sha256 === $original_sha256 && $current_sha3_256 === $original_sha3_256) return 'intact';
     return 'tampered';
+}
+
+// ── File Streaming Helper ────────────────────────────────────────
+function stream_evidence_file($file_path, $file_name, $mime_type = null) {
+    if (!file_exists($file_path) || !is_readable($file_path)) {
+        http_response_code(404);
+        die('File not found on server.');
+    }
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    
+    $file_size = filesize($file_path);
+    $mime = $mime_type ?? (new finfo(FILEINFO_MIME_TYPE))->file($file_path);
+    
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Type: ' . $mime);
+    header('Content-Disposition: attachment; filename="' . addslashes($file_name) . '"');
+    header('Content-Length: ' . $file_size);
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+    
+    readfile($file_path);
+    exit;
 }
 
 // ── Evidence Number Generator ────────────────────────────────
@@ -537,12 +716,12 @@ function create_download_token($pdo, $evidence_id, $user_id, $reason = '', $hour
     $expires = date('Y-m-d H:i:s', strtotime("+{$hours} hours"));
     
     // Get evidence details for the token
-    $ev = $pdo->prepare("SELECT file_path, file_name, evidence_number, sha256_hash, md5_hash FROM evidence WHERE id=?");
+    $ev = $pdo->prepare("SELECT file_path, file_name, evidence_number, sha256_hash, sha3_256_hash FROM evidence WHERE id=?");
     $ev->execute([$evidence_id]);
     $ev = $ev->fetch();
     
-    $stmt = $pdo->prepare("INSERT INTO download_tokens (token, evidence_id, file_path, file_name, evidence_number, sha256_hash, md5_hash, created_by, intended_user_id, expires_at, download_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
-    $stmt->execute([$token, $evidence_id, $ev['file_path'] ?? '', $ev['file_name'] ?? '', $ev['evidence_number'] ?? '', $ev['sha256_hash'] ?? '', $ev['md5_hash'] ?? '', $user_id, $user_id, $expires, $reason]);
+    $stmt = $pdo->prepare("INSERT INTO download_tokens (token, evidence_id, file_path, file_name, evidence_number, sha256_hash, sha3_256_hash, created_by, intended_user_id, expires_at, download_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+    $stmt->execute([$token, $evidence_id, $ev['file_path'] ?? '', $ev['file_name'] ?? '', $ev['evidence_number'] ?? '', $ev['sha256_hash'] ?? '', $ev['sha3_256_hash'] ?? '', $user_id, $user_id, $expires, $reason]);
     return $token;
 }
 
@@ -593,18 +772,27 @@ function count_unread_notifications($pdo, $user_id) {
 }
 
 // ── File Upload ───────────────────────────────────────────────
-function handle_evidence_upload($file, $evidence_number) {
+function handle_evidence_upload($file, $evidence_number, $pdo = null, $user_id = null, $username = null, $role = null, $collection_date = null, $collection_location = null, $collection_notes = null) {
+    // Validate file size before any processing
+    $size_check = validate_upload_size($file['tmp_name'], 500);
+    if (!$size_check['valid']) {
+        return ['success' => false, 'error' => $size_check['message'] ?? 'File size validation failed'];
+    }
+
     $allowed_types = [
-        'image/jpeg','image/png','image/gif','image/bmp','image/tiff',
-        'video/mp4','video/avi','video/mkv','video/mov','video/wmv',
+        'image/jpeg','image/png','image/gif','image/bmp','image/tiff','image/webp',
+        'video/mp4','video/avi','video/mkv','video/mov','video/wmv','video/webm',
         'application/pdf','application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'application/vnd.ms-excel',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'text/plain','text/csv','text/html',
+        'text/plain','text/csv','text/html','text/x-python','text/x-shellscript',
         'application/zip','application/x-zip-compressed',
         'application/x-7z-compressed','application/gzip',
-        'application/octet-stream',
+        'application/sql','application/x-sqlite3',
+        'application/javascript','application/json','application/xml',
+        'application/x-msdownload','application/x-executable',
+        'application/vnd.android.package-archive',
     ];
 
     if ($file['error'] !== UPLOAD_ERR_OK) {
@@ -619,26 +807,93 @@ function handle_evidence_upload($file, $evidence_number) {
         return ['success' => false, 'error' => 'File type not permitted.'];
     }
 
+    // MIME-to-extension map for validation
+    $mime_to_exts = [
+        'image/jpeg' => ['jpg', 'jpeg'],
+        'image/png' => ['png'],
+        'image/gif' => ['gif'],
+        'image/bmp' => ['bmp'],
+        'image/tiff' => ['tif', 'tiff'],
+        'image/webp' => ['webp'],
+        'video/mp4' => ['mp4'],
+        'video/avi' => ['avi'],
+        'video/mkv' => ['mkv'],
+        'video/mov' => ['mov'],
+        'video/wmv' => ['wmv'],
+        'video/webm' => ['webm'],
+        'application/pdf' => ['pdf'],
+        'application/msword' => ['doc'],
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => ['docx'],
+        'application/vnd.ms-excel' => ['xls'],
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => ['xlsx'],
+        'text/plain' => ['txt', 'log', 'py', 'js', 'sh', 'bat', 'ps1', 'conf', 'cfg', 'ini', 'env'],
+        'text/csv' => ['csv'],
+        'text/html' => ['html', 'htm'],
+        'text/x-python' => ['py', 'pyw'],
+        'text/x-shellscript' => ['sh', 'bash', 'zsh', 'ksh', 'csh'],
+        'application/zip' => ['zip'],
+        'application/x-zip-compressed' => ['zip'],
+        'application/x-7z-compressed' => ['7z'],
+        'application/gzip' => ['gz', 'tar.gz'],
+        'application/sql' => ['sql'],
+        'application/x-sqlite3' => ['db', 'sqlite', 'sqlite3'],
+        'application/javascript' => ['js'],
+        'application/json' => ['json'],
+        'application/xml' => ['xml'],
+        'application/x-msdownload' => ['exe', 'dll', 'msi'],
+        'application/x-executable' => ['exe', 'bin'],
+        'application/vnd.android.package-archive' => ['apk'],
+    ];
+
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    
+    // Validate extension matches MIME type
+    if (!isset($mime_to_exts[$mime]) || !in_array($ext, $mime_to_exts[$mime])) {
+        @unlink($file['tmp_name']);
+        return ['success' => false, 'error' => 'File extension does not match detected file type.'];
+    }
     $safe_name = preg_replace('/[^a-zA-Z0-9_\-]/', '_', pathinfo($file['name'], PATHINFO_FILENAME));
     $filename = $evidence_number . '_' . $safe_name . '_' . time() . '.' . $ext;
     $dest = UPLOAD_DIR . $filename;
 
-    if (!is_dir(UPLOAD_DIR)) mkdir(UPLOAD_DIR, 0755, true);
+    if (!is_dir(UPLOAD_DIR)) mkdir(UPLOAD_DIR, 0750, true);
 
     if (!move_uploaded_file($file['tmp_name'], $dest)) {
         return ['success' => false, 'error' => 'Failed to move uploaded file.'];
     }
 
     $hashes = generate_file_hashes($dest);
+    
+    $signature = null;
+    $private_key_path = '/etc/digicustody/private.key';
+    if (file_exists($private_key_path)) {
+        $private_key = openssl_pkey_get_private(file_get_contents($private_key_path));
+        if ($private_key) {
+            $signature_binary = '';
+            if (openssl_sign($hashes['sha256'], $signature_binary, $private_key, OPENSSL_ALGO_SHA256)) {
+                $signature = base64_encode($signature_binary);
+            }
+        }
+    }
+    
+    if ($pdo && $user_id) {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+        $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+        audit_log($pdo, $user_id, $username, $role, 'evidence_uploaded', 'evidence', 0, $evidence_number,
+            "File uploaded: $filename | Size: " . format_filesize($hashes['file_size']) . " | SHA256: " . substr($hashes['sha256'], 0, 16) . "...", $ip, $user_agent);
+    }
+    
     return [
         'success'   => true,
         'filename'  => $filename,
         'filepath'  => $dest,
         'file_size' => $hashes['file_size'],
         'sha256'    => $hashes['sha256'],
-        'md5'       => $hashes['md5'],
+        'sha3_256'  => $hashes['sha3_256'],
         'mime_type' => $mime,
+        'collection_date' => $collection_date,
+        'collection_location' => $collection_location,
+        'collection_notes' => $collection_notes,
     ];
 }
 

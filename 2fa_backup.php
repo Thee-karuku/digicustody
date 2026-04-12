@@ -52,6 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['email'] = $user['email'];
                 $_SESSION['last_activity'] = time();
                 $_SESSION['2fa_verified'] = true;
+                $_SESSION['require_2fa'] = true;
                 
                 unset($_SESSION['pending_2fa_user']);
                 

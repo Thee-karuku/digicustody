@@ -43,6 +43,12 @@ $recent_evidence = $pdo->query("
 // Users by role
 $users_by_role = $pdo->query("SELECT role, COUNT(*) as cnt FROM users WHERE status='active' GROUP BY role")->fetchAll();
 
+// Integrity check history (last 5 runs)
+$integrity_checks = $pdo->query("
+    SELECT * FROM integrity_checks 
+    ORDER BY run_at DESC 
+    LIMIT 5")->fetchAll();
+
 // Monthly evidence uploads (last 6 months)
 $monthly = $pdo->query("
     SELECT DATE_FORMAT(uploaded_at,'%b %Y') as month,
@@ -346,6 +352,67 @@ $msg = $_GET['msg'] ?? '';
             </table></div>
             <?php endif; ?>
         </div>
+    </div>
+</div>
+
+<!-- Row 2b: Integrity Check History -->
+<div class="section-card" style="grid-column: span 2;">
+    <div class="section-head">
+        <h2><i class="fas fa-shield-halved"></i> Integrity Check Results</h2>
+        <a href="pages/audit.php?filter=integrity" class="see-all">View all</a>
+    </div>
+    <div class="section-body" style="padding:0;">
+        <?php if (empty($integrity_checks)): ?>
+            <div style="padding:24px;text-align:center;color:var(--muted);">
+                <i class="fas fa-circle-check" style="font-size:28px;margin-bottom:8px;opacity:0.4"></i>
+                <p>No integrity checks have been run yet.</p>
+            </div>
+        <?php else: ?>
+            <table class="dc-table">
+                <thead>
+                    <tr>
+                        <th>Run Date</th>
+                        <th>Total</th>
+                        <th>Intact</th>
+                        <th>Tampered</th>
+                        <th>Missing</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($integrity_checks as $check): ?>
+                    <tr>
+                        <td data-label="Run Date">
+                            <?= date('M j, Y H:i', strtotime($check['run_at'])) ?>
+                        </td>
+                        <td data-label="Total"><?= (int)$check['total_records'] ?></td>
+                        <td data-label="Intact">
+                            <?php if ($check['intact'] > 0): ?>
+                                <span style="color:var(--success)"><?= (int)$check['intact'] ?></span>
+                            <?php else: ?>
+                                <?= (int)$check['intact'] ?>
+                            <?php endif; ?>
+                        </td>
+                        <td data-label="Tampered">
+                            <?php if ($check['tampered'] > 0): ?>
+                                <span class="badge badge-red"><?= (int)$check['tampered'] ?></span>
+                            <?php else: ?>
+                                0
+                            <?php endif; ?>
+                        </td>
+                        <td data-label="Missing">
+                            <?php if ($check['missing'] > 0): ?>
+                                <span class="badge badge-orange"><?= (int)$check['missing'] ?></span>
+                            <?php else: ?>
+                                0
+                            <?php endif; ?>
+                        </td>
+                        <td data-label="Duration"><?= number_format($check['duration_seconds'], 2) ?>s</td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
     </div>
 </div>
 

@@ -26,6 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $desc     = trim($_POST['description'] ?? '');
             $type     = trim($_POST['case_type'] ?? '');
             $priority = in_array($_POST['priority']??'',['low','medium','high','critical']) ? $_POST['priority'] : 'medium';
+            $suggested_analyst = (int)($_POST['suggested_analyst'] ?? 0);
 
             if (empty($title)) { $err = 'Case title is required.'; }
             else {
@@ -36,8 +37,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cid = $pdo->lastInsertId();
                 // Auto-grant case_access to creator
                 grant_case_access($pdo, $cid, $uid, $uid);
+                
+                // If analyst suggested (investigators) or assigned (admins), add to case
+                if ($suggested_analyst > 0) {
+                    // Verify user is actually an analyst
+                    $chk = $pdo->prepare("SELECT role FROM users WHERE id=? AND status='active'");
+                    $chk->execute([$suggested_analyst]);
+                    $user_role = $chk->fetchColumn();
+                    
+                    if ($user_role === 'analyst') {
+                        $pdo->prepare("UPDATE cases SET assigned_analyst=?,updated_at=NOW() WHERE id=?")
+                            ->execute([$suggested_analyst, $cid]);
+                        grant_case_access($pdo, $cid, $suggested_analyst, $uid);
+                        
+                        // Get analyst name for notification
+                        $analyst_name = $pdo->prepare("SELECT full_name FROM users WHERE id=?")->execute([$suggested_analyst]);
+                        $analyst_name = $pdo->query("SELECT full_name FROM users WHERE id=$suggested_analyst")->fetchColumn();
+                        
+                        send_notification($pdo, $suggested_analyst, 'Case Assigned',
+                            "You have been assigned to case $case_num: $title", 'info', 'case', $cid);
+                        
+                        $msg = "Case <strong>$case_num</strong> created successfully. Analyst <strong>$analyst_name</strong> has been assigned.";
+                    } else {
+                        $msg = "Case <strong>$case_num</strong> created successfully.";
+                    }
+                } else {
+                    $msg = "Case <strong>$case_num</strong> created successfully.";
+                }
+                
                 audit_log($pdo,$uid,$_SESSION['username'],$role,'case_created','case',$cid,$case_num,"Case created: $case_num — $title");
-                $msg = "Case <strong>$case_num</strong> created successfully.";
             }
         }
 

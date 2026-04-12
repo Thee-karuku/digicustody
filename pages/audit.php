@@ -21,6 +21,12 @@ $page_title = 'Audit Logs';
 $uid  = $_SESSION['user_id'];
 $role = $_SESSION['role'];
 
+// ── Verify Audit Chain ───────────────────────────────────────
+$chain_verify_result = null;
+if (is_admin() && isset($_GET['verify_chain'])) {
+    $chain_verify_result = verify_audit_chain($pdo);
+}
+
 // ── Filters ──────────────────────────────────────────────
 $search       = trim($_GET['search'] ?? '');
 $filter_action= $_GET['action_type'] ?? '';
@@ -228,6 +234,9 @@ function page_url(int $p): string {
     </div>
     <?php if ($role === 'admin'): ?>
     <div style="display:flex;gap:10px;">
+        <a href="audit.php?verify_chain=1" class="btn btn-outline" <?= isset($_GET['verify_chain']) ? 'style="background:var(--gold);color:#060d1a"' : '' ?>>
+            <i class="fas fa-link"></i> Verify Chain
+        </a>
         <a href="audit_export.php" target="_blank" class="btn btn-outline">
             <i class="fas fa-file-pdf"></i> Printable Report
         </a>
@@ -246,6 +255,28 @@ function page_url(int $p): string {
     <i class="fas fa-lock"></i>
     <span>Audit logs are <strong style="color:var(--success)">immutable and tamper-proof</strong> — records cannot be edited or deleted. Every action in the system is permanently recorded here.</span>
 </div>
+
+<!-- Chain Verification Results -->
+<?php if ($chain_verify_result): ?>
+<div class="alert <?= $chain_verify_result['valid'] ? 'alert-success' : 'alert-danger' ?>" style="margin-bottom:20px;">
+    <i class="fas <?= $chain_verify_result['valid'] ? 'fa-check-circle' : 'fa-triangle-exclamation' ?>"></i>
+    <div>
+        <strong>Audit Chain Verification Result:</strong>
+        <?php if ($chain_verify_result['valid']): ?>
+            The audit log chain is <strong style="color:var(--success)">VALID</strong>. 
+            All <?= $chain_verify_result['total'] ?> records are intact with no tampering detected.
+        <?php else: ?>
+            <strong style="color:var(--danger)">CHAIN COMPROMISED!</strong>
+            <?= count($chain_verify_result['errors']) ?> integrity violations detected:
+            <ul style="margin:10px 0 0 20px;">
+                <?php foreach ($chain_verify_result['errors'] as $error): ?>
+                    <li><?= e($error) ?></li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- Stats -->
 <div class="stats-mini">

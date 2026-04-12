@@ -20,38 +20,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? '';
 
         if ($action === 'save_draft') {
-            $evidence_id     = (int)($_POST['evidence_id'] ?? 0);
-            $title           = trim($_POST['title'] ?? '');
-            $summary         = trim($_POST['summary'] ?? '');
-            $findings        = trim($_POST['findings'] ?? '');
-            $conclusions     = trim($_POST['conclusions'] ?? '');
-            $recommendations = trim($_POST['recommendations'] ?? '');
-            $tools_used      = trim($_POST['tools_used'] ?? '');
-            $report_type     = trim($_POST['report_type'] ?? 'general');
-            $severity        = trim($_POST['severity'] ?? 'medium');
-
-            if (!$evidence_id || empty($title)) {
-                $err = 'Evidence and title are required to save a draft.';
+            $evidence_id = (int)($_POST['evidence_id'] ?? 0);
+            
+            if (!$evidence_id) {
+                $err = 'Evidence ID is required.';
+            } elseif (!user_can_access_evidence($pdo, $uid, $role, $evidence_id)) {
+                $err = 'You are not authorized to access this evidence.';
             } else {
-                $ev = $pdo->prepare("SELECT case_id FROM evidence WHERE id=?");
-                $ev->execute([$evidence_id]);
-                $ev = $ev->fetch(PDO::FETCH_ASSOC);
+                $title = trim($_POST['title'] ?? '');
+                $summary = trim($_POST['summary'] ?? '');
+                $findings = trim($_POST['findings'] ?? '');
+                $conclusions = trim($_POST['conclusions'] ?? '');
+                $recommendations = trim($_POST['recommendations'] ?? '');
+                $tools_used = trim($_POST['tools_used'] ?? '');
+                $report_type = trim($_POST['report_type'] ?? 'general');
+                $severity = trim($_POST['severity'] ?? 'medium');
 
-                if (!$ev) { $err = 'Evidence not found.'; }
-                else {
-                    $draft_id = (int)($_POST['draft_id'] ?? 0);
-                    if ($draft_id > 0) {
-                        $pdo->prepare("UPDATE analysis_reports SET title=?,summary=?,findings=?,conclusions=?,recommendations=?,tools_used=?,report_type=?,severity=?,updated_at=NOW() WHERE id=? AND status='draft' AND submitted_by=?")
-                            ->execute([$title,$summary,$findings,$conclusions,$recommendations,$tools_used,$report_type,$severity,$draft_id,$uid]);
-                        $msg = "Draft updated successfully.";
+                if (empty($title)) {
+                    $err = 'Title is required to save a draft.';
+                } else {
+                    $ev = $pdo->prepare("SELECT case_id FROM evidence WHERE id=?");
+                    $ev->execute([$evidence_id]);
+                    $ev = $ev->fetch(PDO::FETCH_ASSOC);
+
+                    if (!$ev) {
+                        $err = 'Evidence not found.';
                     } else {
-                        $rnum = generate_report_number($pdo);
-                        $pdo->prepare("INSERT INTO analysis_reports (report_number,evidence_id,case_id,title,summary,findings,conclusions,recommendations,tools_used,report_type,severity,submitted_by,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-                            ->execute([$rnum,$evidence_id,$ev['case_id'],$title,$summary,$findings,$conclusions,$recommendations,$tools_used,$report_type,$severity,$uid,'draft']);
-                        $msg = "Draft saved successfully.";
+                        $draft_id = (int)($_POST['draft_id'] ?? 0);
+                        if ($draft_id > 0) {
+                            $pdo->prepare("UPDATE analysis_reports SET title=?,summary=?,findings=?,conclusions=?,recommendations=?,tools_used=?,report_type=?,severity=?,updated_at=NOW() WHERE id=? AND status='draft' AND submitted_by=?")
+                                ->execute([$title, $summary, $findings, $conclusions, $recommendations, $tools_used, $report_type, $severity, $draft_id, $uid]);
+                            $msg = "Draft updated successfully.";
+                        } else {
+                            $rnum = generate_report_number($pdo);
+                            $pdo->prepare("INSERT INTO analysis_reports (report_number,evidence_id,case_id,title,summary,findings,conclusions,recommendations,tools_used,report_type,severity,submitted_by,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                                ->execute([$rnum, $evidence_id, $ev['case_id'], $title, $summary, $findings, $conclusions, $recommendations, $tools_used, $report_type, $severity, $uid, 'draft']);
+                            $msg = "Draft saved successfully.";
+                        }
+                        $_SESSION['draft_msg'] = $msg;
+                        header('Location: reports.php');
+                        exit;
                     }
-                    $_SESSION['draft_msg'] = $msg;
-                    header('Location: reports.php'); exit;
                 }
             }
         }

@@ -462,3 +462,5 @@ a { text-decoration: none; color: inherit; }
 .toast.warning .toast-bar{background:var(--warning);}
 .toast.info .toast-bar{background:var(--info);}
 @keyframes toastBar{from{width:100%}to{width:0%}}
+.pulse{animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}

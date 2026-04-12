@@ -9,14 +9,19 @@ session_start();
 require_once __DIR__.'/../config/db.php';
 require_login();
 
-// COC Report — admin and investigator only
-if (!is_admin() && !is_investigator()) {
+// COC Report — admin, investigator, and analyst can view
+if (!is_admin() && !is_investigator() && !is_analyst()) {
     header('Location: ' . BASE_URL . 'dashboard.php?error=access_denied');
     exit;
 }
 
 $id = (int)($_GET['id'] ?? 0);
 if (!$id) { header('Location: evidence.php'); exit; }
+
+if (!user_can_access_evidence($pdo, $_SESSION['user_id'], $_SESSION['role'], $id)) {
+    http_response_code(403);
+    die('You are not authorized to access this evidence.');
+}
 
 // Fetch evidence with full details
 $stmt = $pdo->prepare("
@@ -40,6 +45,8 @@ $stmt = $pdo->prepare("
 $stmt->execute([$id]);
 $ev = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$ev) { header('Location: evidence.php?error=not_found'); exit; }
+
+// Allow viewing COC report even if flagged - it's just informational
 
 // All audit logs for this evidence
 $logs = $pdo->prepare("

@@ -104,23 +104,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']??'')==='verify_in
     $file_path = $ev['file_path'];
     if (file_exists($file_path)) {
         $current_sha256 = hash_file('sha256', $file_path);
-        $current_md5    = hash_file('md5',    $file_path);
-        $status = ($current_sha256===$ev['sha256_hash'] && $current_md5===$ev['md5_hash']) ? 'intact' : 'tampered';
+        $current_sha3_256 = hash_file('sha3-256', $file_path);
+        $status = ($current_sha256===$ev['sha256_hash'] && $current_sha3_256===$ev['sha3_256_hash']) ? 'intact' : 'tampered';
 
         $pdo->prepare("INSERT INTO hash_verifications
-            (evidence_id,verified_by,sha256_at_verification,md5_at_verification,original_sha256,original_md5,integrity_status,notes)
+            (evidence_id,verified_by,sha256_at_verification,sha3_256_at_verification,original_sha256,original_sha3_256,integrity_status,notes)
             VALUES(?,?,?,?,?,?,?,?)")
-            ->execute([$id,$uid,$current_sha256,$current_md5,$ev['sha256_hash'],$ev['md5_hash'],$status,$_POST['notes']??'']);
+            ->execute([$id,$uid,$current_sha256,$current_sha3_256,$ev['sha256_hash'],$ev['sha3_256_hash'],$status,$_POST['notes']??'']);
 
         if ($status==='tampered') {
-            $pdo->prepare("UPDATE evidence SET status='flagged' WHERE id=?")->execute([$id]);
+            $pdo->prepare("UPDATE evidence SET status='flagged', pre_flag_status=COALESCE(pre_flag_status, status) WHERE id=?")->execute([$id]);
             send_notification($pdo,$uid,'Integrity Alert',"Evidence {$ev['evidence_number']} integrity check FAILED — file may be tampered!",'danger','evidence',$id);
         }
 
         audit_log($pdo,$uid,$_SESSION['username'],$role,'hash_verified','evidence',$id,$ev['evidence_number'],
             "Integrity check: $status for {$ev['evidence_number']}",
             $_SERVER['REMOTE_ADDR']??'','',[
-                'status'=>$status,'sha256_match'=>$current_sha256===$ev['sha256_hash'],'md5_match'=>$current_md5===$ev['md5_hash']
+                'status'=>$status,'sha256_match'=>$current_sha256===$ev['sha256_hash'],'sha3_256_match'=>$current_sha3_256===$ev['sha3_256_hash']
             ]);
         header("Location: evidence_view.php?id=$id&verified=$status"); exit;
     }
@@ -221,10 +221,15 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
     </div>
 </div>
 
-<?php if($verified_msg==='intact'): ?>
+<?php 
+$flag_error = $_GET['error'] ?? '';
+$flag_msg = $_GET['msg'] ?? '';
+if($verified_msg==='intact'): ?>
 <div class="alert alert-success"><i class="fas fa-circle-check"></i> Integrity check passed — file is intact. SHA-256 and MD5 hashes match.</div>
 <?php elseif($verified_msg==='tampered'): ?>
 <div class="alert alert-danger"><i class="fas fa-triangle-exclamation"></i> <strong>INTEGRITY ALERT:</strong> Hash mismatch detected — this file may have been tampered with. Evidence has been flagged.</div>
+<?php elseif($flag_error==='flagged_integrity' && $flag_msg): ?>
+<div class="alert alert-danger"><i class="fas fa-flag"></i> <strong>Transfer Blocked:</strong> <?= e($flag_msg) ?></div>
 <?php endif; ?>
 
 <!-- Hero bar -->
@@ -263,10 +268,10 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
             </div>
             <div class="hash-block">
                 <div class="hb-label">
-                    <span><i class="fas fa-fingerprint" style="color:var(--info);margin-right:6px"></i>MD5 Hash</span>
-                    <button class="copy-btn" onclick="copyText('md5val','Copy MD5')"><i class="fas fa-copy"></i></button>
+                    <span><i class="fas fa-fingerprint" style="color:var(--info);margin-right:6px"></i>SHA3-256 Hash</span>
+                    <button class="copy-btn" onclick="copyText('sha3_256val','Copy SHA3-256')"><i class="fas fa-copy"></i></button>
                 </div>
-                <div class="hb-val" id="md5val"><?= e($ev['md5_hash']) ?></div>
+                <div class="hb-val" id="sha3_256val"><?= e($ev['sha3_256_hash']) ?></div>
             </div>
         </div>
     </div>

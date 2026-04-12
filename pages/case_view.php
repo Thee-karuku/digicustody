@@ -16,6 +16,11 @@ $id   = (int)($_GET['id'] ?? 0);
 
 if (!$id) { header('Location: cases.php'); exit; }
 
+if (!user_can_access_case($pdo, $uid, $role, $id)) {
+    http_response_code(403);
+    die('You are not authorized to access this case.');
+}
+
 // Fetch case
 $stmt = $pdo->prepare("
     SELECT c.*, u.full_name AS creator_name, u.role AS creator_role
@@ -26,6 +31,23 @@ $stmt = $pdo->prepare("
 $stmt->execute([$id]);
 $case = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$case) { header('Location: cases.php?error=not_found'); exit; }
+
+// Get case stats for conclude modal
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE case_id=?");
+$stmt->execute([$id]);
+$case_stats = [
+    'total_evidence' => (int)$stmt->fetchColumn(),
+    'flagged_evidence' => 0,
+    'pending_transfers' => 0,
+];
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE case_id=? AND status='flagged'");
+$stmt->execute([$id]);
+$case_stats['flagged_evidence'] = (int)$stmt->fetchColumn();
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence_transfers WHERE case_id=? AND status='pending'");
+$stmt->execute([$id]);
+$case_stats['pending_transfers'] = (int)$stmt->fetchColumn();
 
 // Access control: investigators/admins see all, analysts only see assigned cases
 if ($role === 'analyst') {
@@ -56,10 +78,98 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['update_status']) && $ro
     if (verify_csrf($_POST['csrf_token']??'')) {
         $new_status = in_array($_POST['status']??'',['open','under_investigation','closed','archived'])
             ? $_POST['status'] : $case['status'];
-        $pdo->prepare("UPDATE cases SET status=?,updated_at=NOW() WHERE id=?")->execute([$new_status,$id]);
-        $case['status'] = $new_status;
-        audit_log($pdo,$uid,$_SESSION['username'],$role,'case_updated','case',$id,
-            $case['case_number'],"Case status updated to: $new_status");
+        
+        // Special handling for case closure
+        if ($new_status === 'closed') {
+            $closing_notes = trim($_POST['closing_notes'] ?? '');
+            if (empty($closing_notes)) {
+                $case_error = 'Closing notes are required when closing a case.';
+            } else {
+                // Check for flagged evidence
+                $stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE case_id=? AND status='flagged'");
+                $stmt->execute([$id]);
+                $flagged_count = (int)$stmt->fetchColumn();
+                
+                if ($flagged_count > 0) {
+                    $case_error = "Cannot close case: $flagged_count evidence file(s) are flagged for integrity review. Resolve all flagged evidence before closing the case.";
+                } else {
+                    // Cancel pending transfers - count first
+                    $stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence_transfers WHERE case_id=? AND status='pending'");
+                    $stmt->execute([$id]);
+                    $cancelled_transfers = (int)$stmt->fetchColumn();
+                    
+                    if ($cancelled_transfers > 0) {
+                        $pdo->prepare("UPDATE evidence_transfers SET status='rejected', rejection_reason='Case closed', rejected_at=NOW(), rejected_by=? WHERE case_id=? AND status='pending'")
+                            ->execute([$uid, $id]);
+                    }
+                    
+                    // Archive all non-flagged evidence - count first
+                    $stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE case_id=? AND status != 'flagged'");
+                    $stmt->execute([$id]);
+                    $archived_evidence = (int)$stmt->fetchColumn();
+                    
+                    if ($archived_evidence > 0) {
+                        $pdo->prepare("UPDATE evidence SET status='archived' WHERE case_id=? AND status != 'flagged'")->execute([$id]);
+                    }
+                    
+                    // Update case status with closed_at
+                    $pdo->prepare("UPDATE cases SET status=?, updated_at=NOW(), closed_at=NOW(), closing_notes=? WHERE id=?")->execute([$new_status, $closing_notes, $id]);
+                    $case['status'] = $new_status;
+                    
+                    // Get assigned analyst and collaborators to notify
+                    $stmt = $pdo->prepare("SELECT DISTINCT u.id FROM users u LEFT JOIN case_access ca ON ca.user_id=u.id WHERE ca.case_id=? AND u.status='active' AND u.id != ?");
+                    $stmt->execute([$id, $uid]);
+                    $notify_users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    
+                    // Also get case assigned_analyst
+                    $stmt = $pdo->prepare("SELECT assigned_analyst FROM cases WHERE id=?");
+                    $stmt->execute([$id]);
+                    $case_row = $stmt->fetch();
+                    if ($case_row && $case_row['assigned_analyst']) {
+                        $notify_users[] = ['id' => $case_row['assigned_analyst']];
+                    }
+                    
+                    // Remove duplicates
+                    $seen = [];
+                    $unique_users = [];
+                    foreach ($notify_users as $u) {
+                        if (!isset($seen[$u['id']])) {
+                            $seen[$u['id']] = true;
+                            $unique_users[] = $u;
+                        }
+                    }
+                    
+                    // Send notifications
+                    foreach ($unique_users as $u) {
+                        send_notification($pdo, $u['id'], 'Case Closed', "Case {$case['case_number']} has been closed. Closing notes: " . substr($closing_notes, 0, 200), 'info', 'case', $id);
+                    }
+                    
+                    $audit_msg = "Case closed. Closing notes: $closing_notes. Archived $archived_evidence evidence.";
+                    if ($cancelled_transfers > 0) {
+                        $audit_msg .= " Cancelled $cancelled_transfers pending transfer(s).";
+                    }
+                    audit_log($pdo,$uid,$_SESSION['username'],$role,'case_closed','case',$id,$case['case_number'],$audit_msg,$_SERVER['REMOTE_ADDR']??'','');
+                }
+            }
+        } elseif ($new_status === 'archived') {
+            // Check for flagged evidence before archiving too
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE case_id=? AND status='flagged'");
+            $stmt->execute([$id]);
+            $flagged_count = (int)$stmt->fetchColumn();
+            
+            if ($flagged_count > 0) {
+                $case_error = "Cannot archive case: $flagged_count evidence file(s) are flagged for integrity review. Resolve all flagged evidence before archiving.";
+            } else {
+                $pdo->prepare("UPDATE cases SET status=?,updated_at=NOW() WHERE id=?")->execute([$new_status,$id]);
+                $case['status'] = $new_status;
+                audit_log($pdo,$uid,$_SESSION['username'],$role,'case_updated','case',$id,$case['case_number'],"Case status updated to: $new_status");
+            }
+        } else {
+            // Normal status update
+            $pdo->prepare("UPDATE cases SET status=?,updated_at=NOW() WHERE id=?")->execute([$new_status,$id]);
+            $case['status'] = $new_status;
+            audit_log($pdo,$uid,$_SESSION['username'],$role,'case_updated','case',$id,$case['case_number'],"Case status updated to: $new_status");
+        }
     }
 }
 
@@ -82,6 +192,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['assign_analyst']) && $r
                 $analyst = $user;
                 $pdo->prepare("UPDATE cases SET assigned_analyst=?,updated_at=NOW() WHERE id=?")->execute([$analyst_id,$id]);
                 $case['assigned_analyst'] = $analyst_id;
+                $pdo->prepare("
+                    UPDATE evidence 
+                    SET assigned_analyst = ?, assigned_at = NOW(), analysis_status = 'assigned', status = 'in_analysis' 
+                    WHERE case_id = ? AND status = 'collected'
+                ")->execute([$analyst_id, $id]);
                 grant_case_access($pdo, $id, $analyst_id, $uid);
                 send_notification($pdo, $analyst_id, 'Case Assignment',
                     "You have been assigned to case {$case['case_number']}: {$case['case_title']}", 'info', 'case', $id);
@@ -311,18 +426,51 @@ $csrf = csrf_token();
         </div>
         <?php endif; ?>
         <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
-            <form method="POST" style="display:flex;align-items:center;gap:8px;">
-                <input type="hidden" name="csrf_token"    value="<?= $csrf ?>">
-                <input type="hidden" name="update_status" value="1">
-                <select name="status" class="status-select" onchange="this.form.submit()">
-                    <?php foreach(['open','under_investigation','closed','archived'] as $s): ?>
-                    <option value="<?= $s ?>" <?= $case['status']===$s?'selected':'' ?>>
-                        <?= ucwords(str_replace('_',' ',$s)) ?>
-                    </option>
-                    <?php endforeach; ?>
-                </select>
-                <span style="font-size:12px;color:var(--dim)">Status</span>
-            </form>
+            <?php if (!in_array($case['status'], ['closed', 'archived'])): ?>
+            <button type="button" class="btn btn-gold" style="padding:8px 14px;font-size:13px;" onclick="document.getElementById('concludeModal').style.display='flex'">
+                <i class="fas fa-check-circle"></i> Conclude Case
+            </button>
+            <?php else: ?>
+            <span style="font-size:12px;color:var(--dim);padding:8px;">Case is <?= $case['status'] ?></span>
+            <?php endif; ?>
+            
+            <!-- Conclude Case Modal -->
+            <div id="concludeModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;align-items:center;justify-content:center;">
+                <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:90%;max-width:500px;max-height:90vh;overflow-y:auto;">
+                    <h3 style="font-size:18px;font-weight:600;margin-bottom:16px;color:var(--text);"><i class="fas fa-clipboard-check"></i> Conclude Case</h3>
+                    
+                    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px;">
+                        <p style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;">Checklist</p>
+                        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                            <div style="flex:1;min-width:100px;"><span style="font-size:24px;font-weight:700;color:var(--text);"><?= $case_stats['total_evidence'] ?></span><br><span style="font-size:11px;color:var(--muted);">Evidence Items</span></div>
+                            <div style="flex:1;min-width:100px;"><span style="font-size:24px;font-weight:700;color:<?= $case_stats['flagged_evidence']>0?'var(--danger)':'var(--success)' ?>"><?= $case_stats['flagged_evidence'] ?></span><br><span style="font-size:11px;color:var(--muted);">Flagged</span></div>
+                            <div style="flex:1;min-width:100px;"><span style="font-size:24px;font-weight:700;color:<?= $case_stats['pending_transfers']>0?'var(--warning)':'var(--success)' ?>"><?= $case_stats['pending_transfers'] ?></span><br><span style="font-size:11px;color:var(--muted);">Pending Transfers</span></div>
+                        </div>
+                    </div>
+                    
+                    <?php if ($case_stats['flagged_evidence'] > 0): ?>
+                    <div class="alert alert-danger" style="margin-bottom:16px;"><i class="fas fa-flag"></i> Cannot close case with flagged evidence. Resolve all flags first.</div>
+                    <?php endif; ?>
+                    
+                    <form method="POST" id="concludeForm">
+                        <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
+                        <input type="hidden" name="update_status" value="1">
+                        <input type="hidden" name="status" value="closed">
+                        <div class="field">
+                            <label>Closing Notes (required)</label>
+                            <textarea name="closing_notes" id="closingNotes" placeholder="Enter closing notes, summary, findings..." required style="min-height:120px;" oninput="document.getElementById('concludeBtn').disabled=!this.value.trim()"></textarea>
+                    <?php if ($case_stats['flagged_evidence'] > 0): ?>
+                    <p style="font-size:11px;color:var(--danger);margin-top:4px;">Note: Closing will be blocked until all flagged evidence is resolved.</p>
+                    <?php endif; ?>
+                        </div>
+                        <div style="display:flex;gap:10px;margin-top:16px;">
+                            <button type="button" class="btn btn-outline" style="flex:1;padding:12px;" onclick="document.getElementById('concludeModal').style.display='none'">Cancel</button>
+                            <button type="submit" class="btn btn-gold" style="flex:1;padding:12px;" id="concludeBtn" disabled>Conclude & Archive Case</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
             <form method="POST" style="display:flex;align-items:center;gap:8px;">
                 <input type="hidden" name="csrf_token"      value="<?= $csrf ?>">
                 <input type="hidden" name="assign_analyst" value="1">
@@ -543,7 +691,7 @@ document.getElementById('collabModal').addEventListener('click',function(e){if(e
                 <td data-label="Uploaded By"><span style="font-size:12.5px"><?= e($ev['uploader_name']) ?></span></td>
                 <td data-label="Hashes">
                     <span class="hash-chip" title="SHA-256: <?= e($ev['sha256_hash']) ?>">SHA: <?= e(substr($ev['sha256_hash'],0,14)) ?>...</span>
-                    <span class="hash-chip" title="MD5: <?= e($ev['md5_hash']) ?>">MD5: <?= e(substr($ev['md5_hash'],0,14)) ?>...</span>
+                    <span class="hash-chip" title="SHA3-256: <?= e($ev['sha3_256_hash']) ?>">SHA3: <?= e(substr($ev['sha3_256_hash'],0,14)) ?>...</span>
                 </td>
                 <td data-label="Size"><span style="font-size:12px;color:var(--muted)"><?= format_filesize($ev['file_size']) ?></span></td>
                 <td data-label="Status"><?= status_badge($ev['status']) ?></td>
@@ -701,6 +849,7 @@ function toggleRep(id){
     if(c.style.display==='none'){c.style.display='block';i.className='fas fa-chevron-up';}
     else{c.style.display='none';i.className='fas fa-chevron-down';}
 }
+document.getElementById('concludeForm')?.addEventListener('submit',function(e){e.preventDefault();const b=document.getElementById('concludeBtn'),c=new FormData(this);if(!c.get('closing_notes')){alert('Closing notes are required');return;}b.innerHTML='<i class="fas fa-spinner fa-spin"></i> Processing...';b.disabled=true;const f=this;fetch(window.location.href,{method:'POST',body:c}).then(function(){window.location.reload()}).catch(function(err){b.innerHTML='Conclude & Archive Case';b.disabled=false;alert('Error: '+err.message);});});
 </script>
 <script src="../assets/js/main.js"></script>
 </body>

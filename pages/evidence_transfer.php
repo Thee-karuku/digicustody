@@ -21,7 +21,7 @@ if (!$access['allowed']) {
 }
 
 $stmt = $pdo->prepare("
-    SELECT e.*, u.full_name AS custodian_name, c.case_number, c.case_title
+    SELECT e.*, u.full_name AS custodian_name, c.case_number, c.case_title, c.status AS case_status
     FROM evidence e
     JOIN users u ON u.id = e.current_custodian
     JOIN cases c ON c.id = e.case_id
@@ -30,6 +30,14 @@ $stmt = $pdo->prepare("
 $stmt->execute([$id]);
 $ev = $stmt->fetch();
 if (!$ev) { header('Location: evidence.php?error=not_found'); exit; }
+
+if ($ev['status'] === 'flagged') {
+    header('Location: evidence_view.php?id='.$id.'&error=flagged_integrity&msg='.urlencode('This evidence is flagged for an integrity issue and cannot be transferred until an admin reviews it.')); exit;
+}
+
+if (in_array($ev['case_status'], ['closed', 'archived'])) {
+    header('Location: evidence_view.php?id='.$id.'&error=transfer_not_allowed&msg='.urlencode('Transfers are not permitted on closed cases.')); exit;
+}
 
 $transfer_action = $_GET['action'] ?? 'initiate';
 $error = '';
@@ -150,6 +158,12 @@ if ($transfer_action === 'initiate' && can_transfer()) {
                     WHERE id = ?
                 ")->execute([$uid, $transfer_id]);
 
+                // Check status transition
+                if (!can_change_evidence_status($ev['status'], 'transferred')) {
+                    $error = 'Cannot transfer evidence from ' . $ev['status'] . ' status.';
+                    return;
+                }
+                
                 $pdo->prepare("UPDATE evidence SET current_custodian = ?, status = 'transferred' WHERE id = ?")
                     ->execute([$uid, $id]);
 

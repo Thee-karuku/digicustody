@@ -23,8 +23,8 @@ if ($base === '/' || $base === '\\' || $base === '.') {
     $base = rtrim($base, '/');
 }
 define('BASE_URL', $scheme . '://' . $host . $base . '/');
-define('UPLOAD_DIR', __DIR__ . '/../uploads/evidence/');
-define('UPLOAD_URL', BASE_URL . 'uploads/evidence/');
+define('UPLOAD_DIR', '/var/digicustody/evidence/');
+define('UPLOAD_URL', BASE_URL . 'download.php?token=');
 define('DOWNLOAD_TOKEN_EXPIRY', 4);
 if (!defined('SESSION_TIMEOUT')) define('SESSION_TIMEOUT', 3600);
 

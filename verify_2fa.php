@@ -46,16 +46,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['email'] = $user['email'];
                 $_SESSION['last_activity'] = time();
                 $_SESSION['2fa_verified'] = true;
+                $_SESSION['require_2fa'] = true;
                 
-                // Remember account for 30 days if checkbox was checked
+                // Remember device for 30 days if checkbox was checked
                 if ($remember_device) {
-                    $expires = date('Y-m-d H:i:s', strtotime('+30 days'));
-                    $pdo->prepare("UPDATE users SET skip_2fa_until = ? WHERE id = ?")->execute([$expires, $user['id']]);
+                    $token = bin2hex(random_bytes(32));
+                    $token_hash = hash('sha256', $token);
+                    $expires_at = date('Y-m-d H:i:s', strtotime('+30 days'));
+                    $device_name = parse_user_agent($_SERVER['HTTP_USER_AGENT'] ?? '');
+                    $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+                    $user_agent = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
+                    
+                    $pdo->prepare("INSERT INTO trusted_devices (user_id, token_hash, device_name, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+                        ->execute([$user['id'], $token_hash, $device_name, $ip, $user_agent, $expires_at]);
+                    
+                    setcookie('trusted_device', $token, [
+                        'expires' => time() + (30 * 86400),
+                        'path' => '/',
+                        'domain' => '',
+                        'secure' => false,
+                        'httponly' => true,
+                        'samesite' => 'Lax'
+                    ]);
                 }
                 
                 unset($_SESSION['pending_2fa_user']);
                 
-                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa', null, null, null, '2FA verification successful' . ($remember_device ? ' (account remembered for 30 days)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa', null, null, null, '2FA verification successful' . ($remember_device ? ' (device remembered for 30 days)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
                 
                 header('Location: dashboard.php');
                 exit;
@@ -78,16 +95,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['email'] = $user['email'];
                 $_SESSION['last_activity'] = time();
                 $_SESSION['2fa_verified'] = true;
+                $_SESSION['require_2fa'] = true;
                 
-                // Remember account for 30 days if checkbox was checked
+                // Remember device for 30 days if checkbox was checked
                 if ($remember_device) {
-                    $expires = date('Y-m-d H:i:s', strtotime('+30 days'));
-                    $pdo->prepare("UPDATE users SET skip_2fa_until = ? WHERE id = ?")->execute([$expires, $user['id']]);
+                    $token = bin2hex(random_bytes(32));
+                    $token_hash = hash('sha256', $token);
+                    $expires_at = date('Y-m-d H:i:s', strtotime('+30 days'));
+                    $device_name = parse_user_agent($_SERVER['HTTP_USER_AGENT'] ?? '');
+                    $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+                    $user_agent = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
+                    
+                    $pdo->prepare("INSERT INTO trusted_devices (user_id, token_hash, device_name, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+                        ->execute([$user['id'], $token_hash, $device_name, $ip, $user_agent, $expires_at]);
+                    
+                    setcookie('trusted_device', $token, [
+                        'expires' => time() + (30 * 86400),
+                        'path' => '/',
+                        'domain' => '',
+                        'secure' => false,
+                        'httponly' => true,
+                        'samesite' => 'Lax'
+                    ]);
                 }
                 
                 unset($_SESSION['pending_2fa_user']);
                 
-                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa_backup', null, null, null, '2FA backup code used' . ($remember_device ? ' (account remembered for 30 days)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+                audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa_backup', null, null, null, '2FA backup code used' . ($remember_device ? ' (device remembered for 30 days)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
                 
                 header('Location: dashboard.php');
                 exit;

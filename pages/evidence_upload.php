@@ -77,6 +77,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 
     // ── Core fields ──
     $case_id         = (int)($_POST['case_id'] ?? 0);
+    
+    // Check case status - block upload if case is closed or archived
+    $stmt = $pdo->prepare("SELECT status, case_number FROM cases WHERE id=?");
+    $stmt->execute([$case_id]);
+    $case_info = $stmt->fetch();
+    if ($case_info && in_array($case_info['status'], ['closed', 'archived'])) {
+        echo json_encode(['success'=>false,'error'=>'This case is closed and no new evidence can be added.']); exit;
+    }
+    
     $title           = trim($_POST['ev_title'] ?? '');
     $description     = trim($_POST['ev_description'] ?? '');
     $evidence_type   = $_POST['evidence_type'] ?? 'other';
@@ -246,9 +255,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     }
 
     $ev_number = generate_evidence_number($pdo);
-    $upload    = handle_evidence_upload($_FILES['ev_file'], $ev_number);
+    $upload    = handle_evidence_upload($_FILES['ev_file'], $ev_number, $pdo, $uid, $_SESSION['username'], $role, $collection_datetime, $full_location, trim($structured_notes));
 
     if (!$upload['success']) { echo json_encode(['success'=>false,'error'=>$upload['error']]); exit; }
+
+    // ── Disk Quota Enforcement (10GB per case) ───────────────────────
+    $case_quota_bytes = 10 * 1024 * 1024 * 1024; // 10GB
+    $stmt_case_size = $pdo->prepare("SELECT COALESCE(SUM(file_size), 0) FROM evidence WHERE case_id = ?");
+    $stmt_case_size->execute([$case_id]);
+    $current_case_size = (int)$stmt_case_size->fetchColumn();
+    $new_total_size = $current_case_size + $upload['file_size'];
+
+    if ($new_total_size > $case_quota_bytes) {
+        @unlink($upload['filepath']);
+        $quota_gb = $case_quota_bytes / (1024 * 1024 * 1024);
+        $current_gb = $current_case_size / (1024 * 1024 * 1024);
+        $error_msg = "Upload rejected: Case storage quota ({$quota_gb}GB) exceeded. Current: " . round($current_gb, 2) . "GB + " . format_filesize($upload['file_size']) . " = " . format_filesize($new_total_size);
+        echo json_encode(['success' => false, 'error' => $error_msg]);
+        
+        foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm) {
+            send_notification($pdo, $adm['id'], 'Storage Quota Exceeded', "Evidence upload rejected for case {$case_id}: quota exceeded by " . $_SESSION['full_name'], 'warning', 'case', $case_id);
+        }
+        exit;
+    }
 
     // Full location
     $full_location = $collection_location;
@@ -256,7 +285,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 
     $pdo->prepare("INSERT INTO evidence
         (evidence_number,case_id,title,description,evidence_type,acquisition_method,file_name,file_path,
-         file_size,mime_type,sha256_hash,md5_hash,collection_date,collection_location,
+         file_size,mime_type,sha256_hash,sha3_256_hash,collection_date,collection_location,
          collection_notes,collector_badge,tools_used,write_blocker_used,device_serial,device_type,
          device_make_model,os_detected,seal_number,condition_on_receipt,
          witness_name,witness_badge,witness2_name,witness2_badge,
@@ -266,9 +295,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
             $ev_number, $case_id, $title, $description, $evidence_type,
             $acquisition_method, $upload['filename'], $upload['filepath'],
             $upload['file_size'], $upload['mime_type'],
-            $upload['sha256'], $upload['md5'],
-            $collection_datetime, $full_location,
-            trim($structured_notes), $collector_badge, $tools_used, ($write_blocker_used ? 1 : 0), $device_serial, $device_type, $device_make_model, $os_detected, $seal_number, $condition_on_receipt, $witness_name, $witness_badge, $witness2_name, $witness2_badge, $uid, $uid
+            $upload['sha256'], $upload['sha3_256'],
+            $upload['collection_date'], $upload['collection_location'],
+            $upload['collection_notes'], $collector_badge, $tools_used, ($write_blocker_used ? 1 : 0), $device_serial, $device_type, $device_make_model, $os_detected, $seal_number, $condition_on_receipt, $witness_name, $witness_badge, $witness2_name, $witness2_badge, $uid, $uid
         ]);
     $ev_id = $pdo->lastInsertId();
 
@@ -277,7 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         "Evidence uploaded: $ev_number — $title | Collected by: $collected_by_name | Location: $full_location | Tools: $tools_used",
         $_SERVER['REMOTE_ADDR']??'', $_SERVER['HTTP_USER_AGENT']??'',
         [
-            'sha256'=>$upload['sha256'], 'md5'=>$upload['md5'],
+            'sha256'=>$upload['sha256'], 'sha3_256'=>$upload['sha3_256'],
             'size'=>$upload['file_size'], 'mime'=>$upload['mime_type'],
             'collected_by'=>$collected_by_name, 'badge'=>$collector_badge,
             'unit'=>$collector_unit, 'location'=>$full_location,
@@ -340,9 +369,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         // Assign case-level analyst
         $pdo->prepare("UPDATE cases SET assigned_analyst=?, updated_at=NOW() WHERE id=?")
             ->execute([$assigned_analyst_id, $case_id]);
-        // Update evidence with analyst assignment
-        $pdo->prepare("UPDATE evidence SET assigned_analyst=?, assignment_notes=?, assigned_at=NOW(), analysis_status='assigned', status='in_analysis' WHERE id=?")
-            ->execute([$assigned_analyst_id, $assignment_notes, $ev_id]);
+        // Assign analyst and set status to in_analysis (atomically)
+        $assign_result = assign_analyst_to_evidence($pdo, $ev_id, $assigned_analyst_id, $uid, $assignment_notes);
+        if (!$assign_result['success']) {
+            echo json_encode(['success'=>false,'error'=>$assign_result['error']??'Failed to assign analyst']); exit;
+        }
         // Log assignment
         audit_log($pdo,$uid,$_SESSION['username'],$role,'evidence_assigned','evidence',$ev_id,$ev_number,
             "Evidence assigned to analyst for investigation",
@@ -364,7 +395,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         'evidence_id'     => $ev_id,
         'evidence_number' => $ev_number,
         'sha256'          => $upload['sha256'],
-        'md5'             => $upload['md5'],
+        'sha3_256'        => $upload['sha3_256'],
         'file_size'       => format_filesize($upload['file_size']),
         'mime_type'       => $upload['mime_type'],
         'assigned_to'     => $assigned_analyst_id > 0 ? $assigned_analyst_id : null,
@@ -1428,7 +1459,7 @@ async function uploadSingle({id,file}){
                 <div class="hash-result">
                     <div class="hr-title"><i class="fas fa-fingerprint"></i> Integrity Hashes Recorded</div>
                     <div class="hash-row"><span class="hash-label">SHA-256</span><span class="hash-val" id="sha_${id}">${esc(d.sha256)}</span><button class="copy-hash" onclick="copyHash('sha_${id}')"><i class="fas fa-copy"></i></button></div>
-                    <div class="hash-row"><span class="hash-label">MD5</span><span class="hash-val" id="md5_${id}">${esc(d.md5)}</span><button class="copy-hash" onclick="copyHash('md5_${id}')"><i class="fas fa-copy"></i></button></div>
+                    <div class="hash-row"><span class="hash-label">SHA3-256</span><span class="hash-val" id="sha3_${id}">${esc(d.sha3_256)}</span><button class="copy-hash" onclick="copyHash('sha3_${id}')"><i class="fas fa-copy"></i></button></div>
                     <div class="hash-row"><span class="hash-label">Size</span><span class="hash-val">${esc(d.file_size)}</span></div>
                     <div class="hash-row"><span class="hash-label">Type</span><span class="hash-val">${esc(d.mime_type)}</span></div>
                 </div>`;
@@ -1504,11 +1535,11 @@ function showSummary(){
         <table class="summary-table">`;
     cocRows.forEach(([label,val])=>{html+=`<tr><td>${esc(label)}</td><td>${esc(val)}</td></tr>`;});
     html+=`</table></div>`;
-    html+=`<table class="dc-table"><thead><tr><th>Evidence Number</th><th>Title</th><th>SHA-256</th><th>MD5</th><th>Size</th><th>Status</th></tr></thead><tbody>`;
+    html+=`<table class="dc-table"><thead><tr><th>Evidence Number</th><th>Title</th><th>SHA-256</th><th>SHA3-256</th><th>Size</th><th>Status</th></tr></thead><tbody>`;
     uploadResults.forEach(r=>{
         html+=r.success
-            ?`<tr><td style="color:var(--gold);font-weight:700">${esc(r.evidence_number)}</td><td>${esc(r.title)}</td><td class="mono">${esc(r.sha256?.substring(0,16))}...</td><td class="mono">${esc(r.md5?.substring(0,12))}...</td><td>${esc(r.file_size)}</td><td><span class="badge badge-green"><i class="fas fa-check"></i> Uploaded</span></td></tr>`
-            :`<tr><td>—</td><td>${esc(r.title)}</td><td colspan="3" style="color:var(--danger)">${esc(r.error)}</td><td><span class="badge badge-red"><i class="fas fa-xmark"></i> Failed</span></td></tr>`;
+            ?`<tr><td style="color:var(--gold);font-weight:700">${esc(r.evidence_number)}</td><td>${esc(r.title)}</td><td class="mono">${esc(r.sha256?.substring(0,16))}...</td><td class="mono">${esc(r.sha3_256?.substring(0,16))}...</td><td>${esc(r.file_size)}</td><td><span class="badge badge-green"><i class="fas fa-check"></i> Uploaded</span></td></tr>`
+            :`<tr><td>—</td><td>${esc(r.title)}</td><td colspan="4" style="color:var(--danger)">${esc(r.error)}</td><td><span class="badge badge-red"><i class="fas fa-xmark"></i> Failed</span></td></tr>`;
     });
     html+='</tbody></table>';
     document.getElementById('summaryBody').innerHTML=html;

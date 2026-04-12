@@ -62,6 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['email'] = $user['email'];
             $_SESSION['last_activity'] = time();
             $_SESSION['2fa_verified'] = true;
+            $_SESSION['require_2fa'] = true;
             
             audit_log($pdo, $user['id'], $user['username'], $user['role'], '2fa_enabled', 'user', $user_id, $user['username'], 'Mandatory 2FA enabled on first login', $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
             audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login', null, null, null, 'User logged in after mandatory 2FA setup', $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');

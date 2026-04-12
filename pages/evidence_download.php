@@ -15,28 +15,10 @@ $page_title = 'Download Evidence';
 $uid  = $_SESSION['user_id'] ?? 0;
 $role = $_SESSION['role'] ?? '';
 
-// Analysts need case access check; investigators need uploader/custodian/case_access check
-if ($role === 'analyst' && isset($_GET['id'])) {
-    $ev_id = (int)$_GET['id'];
-    $check = $pdo->prepare("
-        SELECT e.id FROM evidence e
-        WHERE e.id=? AND e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?)
-    ");
-    $check->execute([$ev_id, $uid]);
-    if (!$check->fetch()) {
-        header('Location: ../dashboard.php?error=access_denied');
-        exit;
-    }
-} elseif ($role === 'investigator' && isset($_GET['id'])) {
-    $ev_id = (int)$_GET['id'];
-    $check = $pdo->prepare("
-        SELECT e.id FROM evidence e
-        WHERE e.id=? AND (e.uploaded_by=? OR e.current_custodian=? OR e.case_id IN (SELECT ca.case_id FROM case_access ca WHERE ca.user_id=?))
-    ");
-    $check->execute([$ev_id, $uid, $uid, $uid]);
-    if (!$check->fetch()) {
-        header('Location: ../dashboard.php?error=access_denied');
-        exit;
+if (isset($_GET['id'])) {
+    if (!user_can_access_evidence($pdo, $uid, $role, $_GET['id'])) {
+        http_response_code(403);
+        die('You are not authorized to access this evidence.');
     }
 }
 
@@ -71,14 +53,22 @@ if (isset($_GET['token'])) {
     if (!file_exists($file_path)) {
         die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ File Not Found</h2><p style="color:#6b82a0;margin-top:10px">The evidence file could not be located on the server.</p></div>');
     }
-
-    // ── SHA-256 Verification on Download ────────────────────────
-    // Re-hash file at download time and compare against stored hash
-    $stored_sha256 = $td['sha256_hash'] ?? '';
-    $stored_md5 = $td['md5_hash'] ?? '';
     
-    if ($stored_sha256 || $stored_md5) {
-        $integrity = verify_file_integrity($file_path, $stored_sha256, $stored_md5);
+    // Check if evidence is flagged - block token download
+    $stmt = $pdo->prepare("SELECT status, evidence_number FROM evidence WHERE id=?");
+    $stmt->execute([$td['evidence_id']]);
+    $ev_check = $stmt->fetch();
+    if ($ev_check && $ev_check['status'] === 'flagged') {
+        die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ Download Blocked</h2><p style="color:#6b82a0;margin-top:10px">This evidence is under integrity review and cannot be downloaded until an admin resolves the flag.</p></div>');
+    }
+
+    // ── SHA-256 and SHA3-256 Verification on Download ────────────────────────
+    // Re-hash file at download time and compare against stored hashes
+    $stored_sha256 = $td['sha256_hash'] ?? '';
+    $stored_sha3_256 = $td['sha3_256_hash'] ?? '';
+    
+    if ($stored_sha256 || $stored_sha3_256) {
+        $integrity = verify_file_integrity($file_path, $stored_sha256, $stored_sha3_256);
         
         if ($integrity === 'file_missing') {
             die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ File Missing</h2><p style="color:#6b82a0;margin-top:10px">The evidence file no longer exists on the server.</p></div>');
@@ -87,7 +77,7 @@ if (isset($_GET['token'])) {
         if ($integrity === 'tampered') {
             // Log integrity failure but still allow download (with warning header)
             $current_sha256 = hash_file('sha256', $file_path);
-            $current_md5 = hash_file('md5', $file_path);
+            $current_sha3_256 = hash_file('sha3-256', $file_path);
             
             audit_log($pdo, $uid, $_SESSION['username'], $role,
                 'integrity_check_failed', 'evidence', $td['evidence_id'], $td['evidence_number'],
@@ -130,20 +120,16 @@ if (isset($_GET['token'])) {
     // Log to download_history
     log_download($pdo, $td['evidence_id'], $td['created_by'], $td['id'], $td['download_reason'] ?? '');
 
-    // Serve file
-    while (ob_get_level()) { ob_end_clean(); }
-    
-    $finfo    = new finfo(FILEINFO_MIME_TYPE);
-    $mime     = $finfo->file($file_path);
-    $filename = basename($td['file_name']);
+    // Check if evidence is flagged - block download
+    $stmt = $pdo->prepare("SELECT status FROM evidence WHERE id=?");
+    $stmt->execute([$td['evidence_id']]);
+    $ev_status = $stmt->fetch();
+    if ($ev_status && $ev_status['status'] === 'flagged') {
+        die('<div style="font-family:sans-serif;padding:40px;text-align:center;background:#060d1a;color:#f87171;min-height:100vh"><h2>⚠ Download Blocked</h2><p style="color:#6b82a0;margin-top:10px">This evidence is under integrity review and cannot be downloaded until an admin resolves the flag.</p></div>');
+    }
 
-    header('Content-Type: '.$mime);
-    header('Content-Disposition: attachment; filename="'.addslashes($filename).'"');
-    header('Content-Length: '.filesize($file_path));
-    header('Cache-Control: no-store, no-cache, must-revalidate');
-    header('Pragma: no-cache');
-    readfile($file_path);
-    exit;
+    // Serve file
+    stream_evidence_file($file_path, basename($td['file_name']));
 }
 
 // ── Generate download token ───────────────────────────────
@@ -161,12 +147,19 @@ $ev = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$ev) { header('Location: evidence.php?error=not_found'); exit; }
 
-$error = '';
+if ($ev['status'] === 'flagged') {
+    $error = 'This evidence is under integrity review and cannot be downloaded until an admin resolves the flag.';
+    audit_log($pdo, $uid, $_SESSION['username'], $role, 'download_blocked', 'evidence', $id, $ev['evidence_number'], "Download blocked: evidence is flagged for integrity review", $_SERVER['REMOTE_ADDR'] ?? '', '');
+} else {
+    $error = '';
+}
 $token_data = null;
 
 // Handle token generation
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verify_csrf($_POST['csrf_token'] ?? '')) {
+    if ($ev['status'] === 'flagged') {
+        $error = 'This evidence is under integrity review and cannot be downloaded until an admin resolves the flag.';
+    } elseif (!verify_csrf($_POST['csrf_token'] ?? '')) {
         $error = 'Security token mismatch.';
     } else {
         $reason = trim($_POST['download_reason'] ?? '');

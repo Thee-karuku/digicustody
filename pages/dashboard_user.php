@@ -95,6 +95,23 @@ $s->execute([$uid]); $my_reports = (int)$s->fetchColumn();
 $s = $pdo->prepare("SELECT COUNT(*) FROM hash_verifications WHERE verified_by=? AND integrity_status='tampered'");
 $s->execute([$uid]); $tampered = (int)$s->fetchColumn();
 
+// ── My case access status (for analysts) ────────────────────────
+$my_case_access = [];
+if ($role === 'analyst') {
+    $stmt = $pdo->prepare("
+        SELECT ca.*, c.case_number, c.case_title, c.status as case_status,
+               u.full_name as granted_by_name
+        FROM case_access ca
+        JOIN cases c ON c.id = ca.case_id
+        LEFT JOIN users u ON u.id = ca.granted_by
+        WHERE ca.user_id = ?
+        ORDER BY ca.granted_at DESC
+        LIMIT 10
+    ");
+    $stmt->execute([$uid]);
+    $my_case_access = $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
 // ── My recent uploads ─────────────────────────────────────
 $my_recent = $pdo->prepare("
     SELECT e.*, c.case_number
@@ -231,6 +248,57 @@ $type_icons = [
         <?php foreach($integrity_alerts as $a): ?>
         <a href="pages/evidence_view.php?id=<?= $a['id'] ?>" style="color:var(--danger);margin-left:8px;font-weight:600"><?= e($a['evidence_number']) ?></a>
         <?php endforeach; ?>
+    </div>
+</div>
+<?php endif; ?>
+
+<!-- My Case Access Status (Analysts Only) -->
+<?php if ($role === 'analyst' && !empty($my_case_access)): ?>
+<div class="section-card" style="margin-bottom:20px;">
+    <div class="section-head">
+        <h2><i class="fas fa-user-lock"></i> My Case Access Status</h2>
+    </div>
+    <div style="overflow-x:auto;">
+    <table class="dc-table">
+        <thead><tr>
+            <th>Case</th>
+            <th>Access Role</th>
+            <th>Status</th>
+            <th>Granted</th>
+        </tr></thead>
+        <tbody>
+        <?php foreach ($my_case_access as $ca):
+            $case_status_class = match($ca['case_status']) {
+                'open' => 'badge-green',
+                'under_investigation' => 'badge-blue',
+                'closed' => 'badge-gray',
+                default => 'badge-gray'
+            };
+            $access_status = $ca['case_status'] === 'closed' ? 'Inactive' : 'Active';
+        ?>
+        <tr>
+            <td>
+                <a href="pages/case_view.php?id=<?= $ca['case_id'] ?>" style="font-weight:600;font-size:12.5px;color:var(--gold);text-decoration:none">
+                    <?= e($ca['case_number']) ?>
+                </a>
+                <p style="font-size:11px;color:var(--muted);margin-top:2px;"><?= e(substr($ca['case_title'],0,30)) ?>...</p>
+            </td>
+            <td><span class="badge badge-blue"><?= e($ca['access_role'] ?? 'analyst') ?></span></td>
+            <td>
+                <?php if ($access_status === 'Active'): ?>
+                    <span class="badge badge-green"><i class="fas fa-check"></i> Active</span>
+                <?php else: ?>
+                    <span class="badge badge-gray"><i class="fas fa-times"></i> Inactive</span>
+                <?php endif; ?>
+            </td>
+            <td style="font-size:12px;color:var(--muted)">
+                <?= time_ago($ca['granted_at']) ?>
+                <p style="font-size:10px;margin-top:2px;">by <?= e($ca['granted_by_name'] ?? 'System') ?></p>
+            </td>
+        </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
     </div>
 </div>
 <?php endif; ?>
