@@ -285,17 +285,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 
     $pdo->prepare("INSERT INTO evidence
         (evidence_number,case_id,title,description,evidence_type,acquisition_method,file_name,file_path,
-         file_size,mime_type,sha256_hash,sha3_256_hash,collection_date,collection_location,
+         file_size,mime_type,sha256_hash,sha3_256_hash,digital_signature,collection_date,collection_location,
          collection_notes,collector_badge,tools_used,write_blocker_used,device_serial,device_type,
          device_make_model,os_detected,seal_number,condition_on_receipt,
          witness_name,witness_badge,witness2_name,witness2_badge,
          current_custodian,status,uploaded_by)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'collected',?)")
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
         ->execute([
             $ev_number, $case_id, $title, $description, $evidence_type,
             $acquisition_method, $upload['filename'], $upload['filepath'],
             $upload['file_size'], $upload['mime_type'],
-            $upload['sha256'], $upload['sha3_256'],
+            $upload['sha256'], $upload['sha3_256'], $upload['digital_signature'],
             $upload['collection_date'], $upload['collection_location'],
             $upload['collection_notes'], $collector_badge, $tools_used, ($write_blocker_used ? 1 : 0), $device_serial, $device_type, $device_make_model, $os_detected, $seal_number, $condition_on_receipt, $witness_name, $witness_badge, $witness2_name, $witness2_badge, $uid, $uid
         ]);

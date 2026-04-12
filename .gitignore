@@ -134,3 +134,10 @@ develop/
 dev.php
 test_*.php
 debug.php
+
+# ===========================================
+# DATABASE MIGRATIONS
+# ===========================================
+
+migrate_*.sql
+

@@ -890,6 +890,7 @@ function handle_evidence_upload($file, $evidence_number, $pdo = null, $user_id =
         'file_size' => $hashes['file_size'],
         'sha256'    => $hashes['sha256'],
         'sha3_256'  => $hashes['sha3_256'],
+        'digital_signature' => $signature,
         'mime_type' => $mime,
         'collection_date' => $collection_date,
         'collection_location' => $collection_location,
