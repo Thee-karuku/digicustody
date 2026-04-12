@@ -208,6 +208,9 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <button type="button" class="btn-back" onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+        <?php if (preg_match('/^image\//', $ev['mime_type'] ?? '')): ?>
+        <button type="button" class="btn btn-preview" onclick="showImagePreview(<?= $id ?>)"><i class="fas fa-eye"></i> Preview</button>
+        <?php endif; ?>
         <a href="evidence_download.php?id=<?= $id ?>" class="btn btn-download"><i class="fas fa-download"></i> Download</a>
         <?php if(can_write()): ?>
         <a href="evidence_transfer.php?id=<?= $id ?>" class="btn btn-outline"><i class="fas fa-right-left"></i> Transfer</a>
@@ -595,6 +598,14 @@ if($verified_msg==='intact'): ?>
 </div>
 
 </div></div></div>
+
+<!-- Image Preview Modal -->
+<div id="imagePreviewModal" class="preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;align-items:center;justify-content:center;flex-direction:column;">
+    <button class="preview-close" onclick="closeImagePreview()" style="position:absolute;top:20px;right:20px;background:none;border:none;color:#fff;font-size:24px;cursor:pointer;z-index:10;"><i class="fas fa-times"></i></button>
+    <img id="previewImage" src="" alt="Preview" style="max-width:90vw;max-height:85vh;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,0.5);">
+    <p style="color:#6b82a0;margin-top:12px;font-size:13px;">Preview will expire in 30 seconds</p>
+</div>
+
 <script>
 function toggleSidebar(){const sb=document.getElementById('sidebar'),ma=document.getElementById('mainArea');if(window.innerWidth<=900){sb.classList.toggle('mobile-open');}else{sb.classList.toggle('collapsed');ma.classList.toggle('collapsed');}localStorage.setItem('sb_collapsed',sb.classList.contains('collapsed')?'1':'0');}
 if(localStorage.getItem('sb_collapsed')==='1'&&window.innerWidth>900){document.getElementById('sidebar').classList.add('collapsed');document.getElementById('mainArea').classList.add('collapsed');}
@@ -611,6 +622,46 @@ function showTab(id,btn){
 function copyText(id,label){
     const val=document.getElementById(id)?.textContent;
     if(val){navigator.clipboard.writeText(val).then(()=>{const btn=event.target.closest('button');if(btn){const orig=btn.innerHTML;btn.innerHTML='<i class="fas fa-check"></i> Copied!';btn.style.color='var(--success)';setTimeout(()=>{btn.innerHTML=orig;btn.style.color='';},1500);}});}
+}
+function showImagePreview(evidenceId) {
+    var modal = document.getElementById('imagePreviewModal');
+    var img = document.getElementById('previewImage');
+    modal.style.display = 'flex';
+    img.src = '';
+    
+    fetch('api/generate_preview_token.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'evidence_id=' + evidenceId
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            img.src = 'download.php?token=' + data.token;
+            img.onload = function() {
+                fetch('api/revoke_token.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'token=' + data.token
+                });
+            };
+            img.onerror = function() {
+                closeImagePreview();
+                alert('Failed to load image preview');
+            };
+        } else {
+            closeImagePreview();
+            alert(data.error || 'Failed to generate preview');
+        }
+    })
+    .catch(function() {
+        closeImagePreview();
+        alert('Failed to load preview');
+    });
+}
+function closeImagePreview() {
+    document.getElementById('imagePreviewModal').style.display = 'none';
+    document.getElementById('previewImage').src = '';
 }
 </script>
 <script src="../assets/js/main.js"></script>
