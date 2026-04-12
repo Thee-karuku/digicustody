@@ -456,10 +456,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 .fi-size{font-size:12px;color:var(--muted);flex-shrink:0;}
 .fi-remove{background:none;border:none;color:var(--dim);cursor:pointer;font-size:13px;padding:3px;border-radius:5px;transition:all .2s;flex-shrink:0;}
 .fi-remove:hover{color:var(--danger);background:rgba(248,113,113,0.1);}
-.fi-progress{height:4px;border-radius:2px;background:var(--surface);overflow:hidden;margin-bottom:10px;}
-.fi-progress-fill{height:100%;border-radius:2px;background:var(--gold);transition:width .3s ease;width:0%;}
+.fi-progress{position:relative;height:6px;border-radius:3px;background:var(--surface);overflow:hidden;margin-bottom:10px;}
+.fi-progress-fill{position:absolute;left:0;top:0;height:100%;border-radius:3px;background:var(--gold);transition:width .15s ease;width:0%;}
 .fi-progress-fill.done{background:var(--success);}
 .fi-progress-fill.err{background:var(--danger);}
+.prog-pct{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text);font-weight:600;}
 .fi-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 .fi-meta .full{grid-column:span 2;}
 .fi-meta label{display:block;font-size:10.5px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
@@ -1267,7 +1268,10 @@ function addFile(file){
             <span class="fi-size">${fmtSize(file.size)}</span>
             <button class="fi-remove" onclick="removeFile('${id}')"><i class="fas fa-xmark"></i></button>
         </div>
-        <div class="fi-progress"><div class="fi-progress-fill" id="prog_${id}"></div></div>
+        <div class="fi-progress" id="progbar_${id}" style="display:none;">
+            <div class="fi-progress-fill" id="prog_${id}"></div>
+            <span class="prog-pct" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text);">0%</span>
+        </div>
         <div class="fi-meta">
             <div><label>Evidence Title <span style="color:var(--danger)">*</span></label>
                 <input type="text" id="title_${id}" value="${esc(file.name.replace(/\.[^/.]+$/,''))}" placeholder="Descriptive title">
@@ -1389,12 +1393,62 @@ async function confirmUpload(){
 async function uploadSingle({id,file}){
     const prog=document.getElementById('prog_'+id);
     const statusEl=document.getElementById('status_'+id);
+    const progBar=document.getElementById('progbar_'+id);
     const card=document.getElementById(id);
     card.classList.add('uploading');
-    statusEl.innerHTML='<span style="color:var(--warning)"><i class="fas fa-spinner fa-spin"></i> Uploading & hashing...</span>';
-    let pct=0;const iv=setInterval(()=>{pct=Math.min(pct+7,85);prog.style.width=pct+'%';},90);
-    const fd=new FormData();
-    fd.append('action','upload_file');
+    statusEl.innerHTML='<span style="color:var(--warning)"><i class="fas fa-spinner fa-spin"></i> Preparing upload...</span>';
+    progBar.style.display='block';
+    
+    return new Promise((resolve)=>{
+        const xhr=new XMLHttpRequest();
+        xhr.upload.addEventListener('progress',(e)=>{
+            if(e.lengthComputable){
+                const pct=Math.round((e.loaded/e.total)*100);
+                prog.style.width=pct+'%';
+                progBar.querySelector('.prog-pct').textContent=pct+'%';
+            }
+        });
+        xhr.addEventListener('load',()=>{
+            try{
+                const d=JSON.parse(xhr.responseText);
+                if(d.success){
+                    prog.style.width='100%';prog.classList.add('done');
+                    progBar.querySelector('.prog-pct').textContent='100%';
+                    card.classList.remove('uploading');card.classList.add('success');
+                    statusEl.innerHTML=`<span style="color:var(--success)"><i class="fas fa-circle-check"></i> Uploaded — <strong>${esc(d.evidence_number)}</strong></span>`;
+                    document.getElementById('hash_'+id).style.display='block';
+                    document.getElementById('hash_'+id).innerHTML=`
+                        <div class="hash-result">
+                            <div class="hr-title"><i class="fas fa-fingerprint"></i> Integrity Hashes Recorded</div>
+                            <div class="hash-row"><span class="hash-label">SHA-256</span><span class="hash-val" id="sha_${id}">${esc(d.sha256)}</span><button class="copy-hash" onclick="copyHash('sha_${id}')"><i class="fas fa-copy"></i></button></div>
+                            <div class="hash-row"><span class="hash-label">SHA3-256</span><span class="hash-val" id="sha3_${id}">${esc(d.sha3_256)}</span><button class="copy-hash" onclick="copyHash('sha3_${id}')"><i class="fas fa-copy"></i></button></div>
+                            <div class="hash-row"><span class="hash-label">Size</span><span class="hash-val">${esc(d.file_size)}</span></div>
+                            <div class="hash-row"><span class="hash-label">Type</span><span class="hash-val">${esc(d.mime_type)}</span></div>
+                        </div>`;
+                    uploadResults.push({success:true,evidence_id:d.evidence_id,evidence_number:d.evidence_number,title:document.getElementById('title_'+id)?.value||file.name,sha256:d.sha256,sha3_256:d.sha3_256,file_size:d.file_size,mime_type:d.mime_type});
+                }else{
+                    progBar.style.background='var(--danger)';
+                    card.classList.remove('uploading');card.classList.add('error');
+                    statusEl.innerHTML=`<span style="color:var(--danger)"><i class="fas fa-circle-xmark"></i> ${esc(d.error||'Upload failed')}</span>`;
+                    uploadResults.push({success:false,title:file.name,error:d.error});
+                }
+            }catch(e){
+                progBar.style.background='var(--danger)';
+                card.classList.remove('uploading');card.classList.add('error');
+                statusEl.innerHTML=`<span style="color:var(--danger)"><i class="fas fa-circle-xmark"></i> Upload failed</span>`;
+                uploadResults.push({success:false,title:file.name,error:'Parse error'});
+            }
+            resolve();
+        });
+        xhr.addEventListener('error',()=>{
+            progBar.style.background='var(--danger)';
+            card.classList.remove('uploading');card.classList.add('error');
+            statusEl.innerHTML=`<span style="color:var(--danger)"><i class="fas fa-circle-xmark"></i> Network error</span>`;
+            uploadResults.push({success:false,title:file.name,error:'Network error'});
+            resolve();
+        });
+        const fd=new FormData();
+        fd.append('action','upload_file');
     fd.append('case_id',selectedCaseId);
     fd.append('ev_title',document.getElementById('title_'+id)?.value||file.name);
     fd.append('ev_description',document.getElementById('desc_'+id)?.value||'');
@@ -1446,36 +1500,9 @@ async function uploadSingle({id,file}){
     const linked = linkedEvidence[id] || [];
     fd.append('linked_evidence',JSON.stringify(linked));
     fd.append('ev_file',file);
-    try{
-        const res=await fetch('evidence_upload.php',{method:'POST',body:fd});
-        const d=await res.json();
-        clearInterval(iv);
-        if(d.success){
-            prog.style.width='100%';prog.classList.add('done');
-            card.classList.remove('uploading');card.classList.add('success');
-            statusEl.innerHTML=`<span style="color:var(--success)"><i class="fas fa-circle-check"></i> Uploaded — <strong>${esc(d.evidence_number)}</strong></span>`;
-            document.getElementById('hash_'+id).style.display='block';
-            document.getElementById('hash_'+id).innerHTML=`
-                <div class="hash-result">
-                    <div class="hr-title"><i class="fas fa-fingerprint"></i> Integrity Hashes Recorded</div>
-                    <div class="hash-row"><span class="hash-label">SHA-256</span><span class="hash-val" id="sha_${id}">${esc(d.sha256)}</span><button class="copy-hash" onclick="copyHash('sha_${id}')"><i class="fas fa-copy"></i></button></div>
-                    <div class="hash-row"><span class="hash-label">SHA3-256</span><span class="hash-val" id="sha3_${id}">${esc(d.sha3_256)}</span><button class="copy-hash" onclick="copyHash('sha3_${id}')"><i class="fas fa-copy"></i></button></div>
-                    <div class="hash-row"><span class="hash-label">Size</span><span class="hash-val">${esc(d.file_size)}</span></div>
-                    <div class="hash-row"><span class="hash-label">Type</span><span class="hash-val">${esc(d.mime_type)}</span></div>
-                </div>`;
-            uploadResults.push({...d,title:document.getElementById('title_'+id)?.value||file.name,success:true});
-        } else {
-            clearInterval(iv);prog.classList.add('err');prog.style.width='100%';
-            card.classList.remove('uploading');card.classList.add('error');
-            statusEl.innerHTML=`<span style="color:var(--danger)"><i class="fas fa-circle-exclamation"></i> Failed: ${esc(d.error)}</span>`;
-            uploadResults.push({title:document.getElementById('title_'+id)?.value||file.name,success:false,error:d.error});
-        }
-    }catch(ex){
-        clearInterval(iv);prog.classList.add('err');
-        card.classList.remove('uploading');card.classList.add('error');
-        statusEl.innerHTML=`<span style="color:var(--danger)"><i class="fas fa-circle-exclamation"></i> Network error</span>`;
-        uploadResults.push({title:file.name,success:false,error:'Network error'});
-    }
+    xhr.open('POST','evidence_upload.php');
+    xhr.send(fd);
+    });
 }
 
 function showSummary(){
