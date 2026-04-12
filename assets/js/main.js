@@ -32,9 +32,11 @@ document.addEventListener('click', function(e) {
 function toggleSidebar() {
     var sb = document.getElementById('sidebar');
     var ma = document.getElementById('mainArea');
+    var ol = document.getElementById('sidebarOverlay');
     if (!sb || !ma) return;
-    if (window.innerWidth <= 900) {
+    if (window.innerWidth <= 768) {
         sb.classList.toggle('mobile-open');
+        if (ol) ol.classList.toggle('active');
     } else {
         sb.classList.toggle('collapsed');
         ma.classList.toggle('collapsed');

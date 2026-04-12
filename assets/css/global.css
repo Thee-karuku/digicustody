@@ -191,8 +191,12 @@ a { text-decoration: none; color: inherit; }
 }
 
 .topbar-left { display: flex; align-items: center; gap: 14px; }
-.menu-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 6px; border-radius: 7px; transition: all .2s; }
+.menu-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 6px; border-radius: 7px; transition: all .2s; display: none; }
 .menu-btn:hover { background: var(--surface2); color: var(--text); }
+
+@media (max-width: 768px) {
+    .menu-btn { display: flex; }
+}
 
 .topbar-title { font-family: 'Space Grotesk', sans-serif; font-size: 16px; font-weight: 600; color: var(--text); }
 
@@ -427,16 +431,74 @@ a { text-decoration: none; color: inherit; }
     .dc-table td:first-child { padding-left: 14px; }
     .dc-table td:first-child::before { display: none; }
 }
-@media (max-width: 600px) {
-    .topbar-search { display: none; }
-    .page-header { padding: 12px 14px; }
-    .section-card { border-radius: 8px; }
-    .btn { padding: 7px 12px; font-size: 12px; }
-    .btn-sm { padding: 4px 8px; font-size: 11px; }
+
+/* Tablet breakpoint (768px) */
+@media (max-width: 768px) {
+    :root { --sb-width: 0px; }
+    .sidebar { position: fixed; left: -260px; z-index: 9999; transition: left 0.3s ease; }
+.sidebar.mobile-open { left: 0; }
+.sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 9998; }
+.sidebar-overlay.active { display: block; }
+
+@media (max-width: 768px) {
+    .menu-btn { display: flex; }
 }
-@media (max-width: 600px) {
-    .page-content { padding: 16px; }
-    .stats-grid { grid-template-columns: 1fr 1fr; }
+
+/* Mobile breakpoint (480px) */
+@media (max-width: 480px) {
+    html { font-size: 13px; }
+    body { -webkit-text-size-adjust: 100%; }
+    
+    .page-content { padding: 12px 10px; }
+    .section-card { padding: 12px; border-radius: 8px; margin-bottom: 12px; }
+    .section-head { flex-direction: column; align-items: flex-start !important; gap: 8px; }
+    .section-head h2 { font-size: 15px; }
+    
+    /* Stats */
+    .stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat-card { padding: 14px; }
+    .stat-value { font-size: 20px; }
+    
+    /* Buttons */
+    .btn { width: 100%; justify-content: center; }
+    .btn-group { flex-direction: column; width: 100%; }
+    .btn-group .btn { border-radius: var(--radius); }
+    
+    /* Form inputs */
+    input, select, textarea { min-height: 48px; padding: 12px; }
+    .field { margin-bottom: 14px; }
+    .field label { font-size: 12px; margin-bottom: 6px; }
+    
+    /* Tables */
+    .dc-table td { padding-left: 14px; padding-top: 12px; }
+    .dc-table td::before { display: none; }
+    .dc-table td[data-label]::before { display: none; }
+    
+    /* Hide non-essential elements */
+    .hide-mobile { display: none !important; }
+    
+    /* Bottom navigation for mobile */
+    .bottom-nav { display: flex !important; position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-top: 1px solid var(--border); padding: 8px 16px; justify-content: space-around; z-index: 1000; }
+    .bottom-nav a { display: flex; flex-direction: column; align-items: center; font-size: 10px; gap: 4px; padding: 8px; color: var(--muted); }
+    .bottom-nav a.active { color: var(--gold); }
+    .main-area { padding-bottom: 70px; }
+    
+    /* Page header */
+    .page-header { padding: 14px 12px; }
+    .page-header h1 { font-size: 20px; }
+    
+    /* Cards */
+    .grid-2, .grid-3 { gap: 12px; }
+    
+    /* Bulk toolbar */
+    .bulk-toolbar { left: 10px !important; right: 10px !important; transform: none !important; width: auto !important; flex-wrap: wrap; justify-content: center; }
+}
+
+/* Touch-friendly defaults */
+@media (pointer: coarse) {
+    input, select, textarea, .btn { min-height: 44px; }
+    a, button { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+}
     .um-info { display: none; }
 }
 

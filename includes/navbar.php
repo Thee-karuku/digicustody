@@ -4,6 +4,7 @@ $unread = count_unread_notifications($pdo, $_SESSION['user_id']);
 $in_pages = strpos($_SERVER['PHP_SELF'], '/pages/') !== false;
 $base     = $in_pages ? '../' : '';
 ?>
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 <header class="topbar">
     <div class="topbar-left">
         <button class="menu-btn" id="menuBtn" onclick="toggleSidebar()">
