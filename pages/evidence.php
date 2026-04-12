@@ -24,7 +24,7 @@ $sort          = in_array($_GET['sort'] ?? '', ['uploaded_at','title','evidence_
                  ? $_GET['sort'] : 'uploaded_at';
 $dir           = strtoupper($_GET['dir'] ?? 'DESC') === 'ASC' ? 'ASC' : 'DESC';
 $page_num      = max(1, (int)($_GET['page'] ?? 1));
-$per_page      = 15;
+$per_page      = in_array((int)($_GET['per_page'] ?? 25), [25, 50, 100]) ? (int)$_GET['per_page'] : 25;
 $offset        = ($page_num - 1) * $per_page;
 $view_mode     = ($_GET['view'] ?? 'table') === 'grid' ? 'grid' : 'table';
 
@@ -206,7 +206,7 @@ function sort_icon(string $col): string {
 }
 
 function page_url(int $p): string {
-    $params = array_merge($_GET, ['page' => $p]);
+    $params = array_merge($_GET, ['page' => $p, 'per_page' => $GLOBALS['per_page']]);
     return '?' . http_build_query($params);
 }
 ?>
@@ -587,6 +587,14 @@ function page_url(int $p): string {
     <span style="font-size:12px;color:var(--muted);margin-left:8px">
         Page <?= $page_num ?> of <?= $total_pages ?> &nbsp;·&nbsp; <?= number_format($total) ?> records
     </span>
+    <div style="display:flex;align-items:center;gap:8px;margin-left:16px;">
+        <span style="font-size:12px;color:var(--muted);">Per page:</span>
+        <select onchange="window.location=this.value" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;">
+            <option value="<?= page_url(1) . '&per_page=25' ?>" <?= $per_page === 25 ? 'selected' : '' ?>>25</option>
+            <option value="<?= page_url(1) . '&per_page=50' ?>" <?= $per_page === 50 ? 'selected' : '' ?>>50</option>
+            <option value="<?= page_url(1) . '&per_page=100' ?>" <?= $per_page === 100 ? 'selected' : '' ?>>100</option>
+        </select>
+    </div>
 </div>
 <?php endif; ?>
 
