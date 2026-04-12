@@ -1060,14 +1060,14 @@ function send_email($to, $subject, $html) {
     
     try {
         $mail->isSMTP();
-        $mail->Host = 'smtp.gmail.com';
+        $mail->Host = 'smtp.sendgrid.net';
         $mail->SMTPAuth = true;
-        $mail->Username = GMAIL_USER;
-        $mail->Password = GMAIL_APP_PASSWORD;
-        $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Username = 'apikey';
+        $mail->Password = $_ENV['SENDGRID_API_KEY'] ?? '';
+        $mail->SMTPSecure = \PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port = 587;
         
-        $mail->setFrom(GMAIL_USER, 'DigiCustody');
+        $mail->setFrom($_ENV['MAIL_FROM'] ?? 'noreply@digicustody.local', $_ENV['MAIL_FROM_NAME'] ?? 'DigiCustody');
         $mail->addAddress($to);
         $mail->isHTML(true);
         $mail->Subject = $subject;
