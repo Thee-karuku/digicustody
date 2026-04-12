@@ -12,6 +12,7 @@ require_login();
 $page_title = 'Evidence';
 $uid  = $_SESSION['user_id'];
 $role = $_SESSION['role'];
+$csrf = csrf_token();
 
 // ── Filters ──────────────────────────────────────────────
 $search        = trim($_GET['search'] ?? '');
@@ -66,6 +67,63 @@ if ($filter_status !== '') { $where[] = "e.status = ?";      $params[] = $filter
 if ($filter_type   !== '') { $where[] = "e.evidence_type = ?"; $params[] = $filter_type; }
 if ($filter_case   !== '') { $where[] = "e.case_id = ?";     $params[] = (int)$filter_case; }
 if ($my_only)              { $where[] = "e.uploaded_by = ?"; $params[] = $uid; }
+
+// ── Handle Bulk Actions ───────────────────────────────────────
+$bulk_msg = '';
+$bulk_err = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['bulk_action'])) {
+    if (!verify_csrf($_POST['csrf_token'] ?? '')) {
+        $bulk_err = 'Security token mismatch.';
+    } else {
+        $action = $_POST['bulk_action'];
+        $evidence_ids = array_filter(array_map('intval', $_POST['evidence_ids'] ?? []));
+        
+        if (empty($evidence_ids)) {
+            $bulk_err = 'No evidence items selected.';
+        } elseif (!is_admin() && !is_investigator()) {
+            $bulk_err = 'You do not have permission for bulk operations.';
+        } else {
+            $allowed_ids = [];
+            foreach ($evidence_ids as $eid) {
+                if (user_can_access_evidence($pdo, $uid, $role, $eid)) {
+                    $allowed_ids[] = $eid;
+                }
+            }
+            
+            $processed = 0;
+            foreach ($allowed_ids as $eid) {
+                if ($action === 'delete' && is_admin()) {
+                    $ev = $pdo->prepare("SELECT file_path, evidence_number FROM evidence WHERE id=?")->execute([$eid]) ? $pdo->query("SELECT file_path, evidence_number FROM evidence WHERE id=$eid")->fetch() : null;
+                    if ($ev && file_exists($ev['file_path'])) { unlink($ev['file_path']); }
+                    $pdo->prepare("DELETE FROM evidence WHERE id=?")->execute([$eid]);
+                    audit_log($pdo, $uid, $_SESSION['username'], $role, 'evidence_deleted', 'evidence', $eid, $ev['evidence_number'] ?? '', 'Bulk delete');
+                    $processed++;
+                } elseif ($action === 'verify') {
+                    $ev = $pdo->prepare("SELECT * FROM evidence WHERE id=?")->execute([$eid]) ? $pdo->query("SELECT * FROM evidence WHERE id=$eid")->fetch(PDO::FETCH_ASSOC) : null;
+                    if ($ev && file_exists($ev['file_path'])) {
+                        $cur_sha = hash_file('sha256', $ev['file_path']);
+                        $cur_sha3 = hash_file('sha3-256', $ev['file_path']);
+                        $status = ($cur_sha === $ev['sha256_hash'] && $cur_sha3 === $ev['sha3_256_hash']) ? 'intact' : 'tampered';
+                        $pdo->prepare("INSERT INTO hash_verifications (evidence_id, verified_by, sha256_at_verification, sha3_256_at_verification, original_sha256, original_sha3_256, integrity_status, notes) VALUES(?,?,?,?,?,?,?,?)")
+                            ->execute([$eid, $uid, $cur_sha, $cur_sha3, $ev['sha256_hash'], $ev['sha3_256_hash'], $status, 'Bulk verification']);
+                        if ($status === 'tampered') {
+                            $pdo->prepare("UPDATE evidence SET status='flagged' WHERE id=?")->execute([$eid]);
+                        }
+                        audit_log($pdo, $uid, $_SESSION['username'], $role, 'hash_verified', 'evidence', $eid, $ev['evidence_number'], "Bulk integrity check: $status");
+                        $processed++;
+                    }
+                } elseif ($action === 'transfer') {
+                    $bulk_err = 'Bulk transfer requires selecting a recipient. Please transfer items individually.';
+                    break;
+                }
+            }
+            
+            if ($action !== 'transfer') {
+                $bulk_msg = "Bulk $action completed: $processed items processed.";
+            }
+        }
+    }
+}
 
 $where_sql = implode(' AND ', $where);
 
@@ -414,6 +472,7 @@ function page_url(int $p): string {
     <div class="table-responsive"><table class="dc-table" style="table-layout:fixed;width:100%">
         <thead>
         <tr>
+            <th style="width:40px"><input type="checkbox" id="selectAllEvidence" onclick="toggleAllEvidence(this)"></th>
             <th style="width:115px"><a href="<?= sort_url('evidence_number') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">No. <?= sort_icon('evidence_number') ?></a></th>
             <th style="width:200px"><a href="<?= sort_url('title') ?>" class="sort-th" style="display:flex;align-items:center;gap:5px;text-decoration:none;color:inherit;">Title &amp; Case <?= sort_icon('title') ?></a></th>
             <th style="width:80px">Custodian</th>
@@ -430,6 +489,9 @@ function page_url(int $p): string {
             [$ico, $col] = $type_icons[$ev['evidence_type']] ?? ['fa-file', 'gray'];
         ?>
         <tr onclick="window.location='evidence_view.php?id=<?= (int)$ev['id'] ?>'" style="cursor:pointer;<?= $tampered ? 'background:rgba(248,113,113,0.04);border-left:3px solid var(--danger)' : '' ?>">
+            <td data-label="" onclick="event.stopPropagation()">
+                <input type="checkbox" class="evidence-checkbox" name="evidence_ids[]" value="<?= (int)$ev['id'] ?>">
+            </td>
             <!-- Evidence number -->
             <td data-label="Evidence">
                 <span class="evidence-num"><?= e($ev['evidence_number']) ?></span>
@@ -532,6 +594,25 @@ function page_url(int $p): string {
 </div><!-- /main-area -->
 </div><!-- /app-shell -->
 
+<!-- Bulk Actions Toolbar -->
+<div id="bulkToolbar" class="bulk-toolbar" style="display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a2436;border:1px solid var(--border);border-radius:12px;padding:12px 20px;display:flex;gap:10px;align-items:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);z-index:1000;">
+    <span style="color:var(--text);font-size:13px;"><span id="selectedCount">0</span> selected</span>
+    <div style="width:1px;height:24px;background:var(--border);"></div>
+    <form method="POST" style="display:inline;">
+        <?= isset($csrf) ? '<input type="hidden" name="csrf_token" value="'.$csrf.'">' : '' ?>
+        <input type="hidden" name="bulk_action" id="bulkActionInput">
+        <button type="submit" class="btn btn-outline" style="padding:6px 12px;font-size:12px;" onclick="setBulkAction('transfer')">
+            <i class="fas fa-paper-plane"></i> Transfer
+        </button>
+        <button type="submit" class="btn btn-outline" style="padding:6px 12px;font-size:12px;" onclick="setBulkAction('verify')">
+            <i class="fas fa-shield-halved"></i> Verify
+        </button>
+        <button type="submit" class="btn btn-outline" style="padding:6px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);" onclick="setBulkAction('delete')">
+            <i class="fas fa-trash"></i> Delete
+        </button>
+    </form>
+</div>
+
 <script>
 // Sidebar
 function toggleSidebar(){
@@ -565,6 +646,31 @@ document.getElementById('searchInput').addEventListener('input',function(){
     clearTimeout(st);
     st=setTimeout(function(){document.getElementById('filterForm').submit();},700);
 });
+// Bulk selection
+function toggleAllEvidence(cb){
+    document.querySelectorAll('.evidence-checkbox').forEach(function(el){el.checked=cb.checked;});
+    updateBulkToolbar();
+}
+function updateBulkToolbar(){
+    var checked=document.querySelectorAll('.evidence-checkbox:checked');
+    var tb=document.getElementById('bulkToolbar');
+    var count=document.getElementById('selectedCount');
+    if(checked.length>0){
+        tb.style.display='flex';
+        count.textContent=checked.length;
+    }else{
+        tb.style.display='none';
+    }
+}
+document.querySelectorAll('.evidence-checkbox').forEach(function(el){
+    el.addEventListener('change',updateBulkToolbar);
+});
+function setBulkAction(action){
+    if(action==='delete'&&!confirm('Are you sure you want to delete '+document.querySelectorAll('.evidence-checkbox:checked').length+' evidence items?')){event.preventDefault();return;}
+    var checked=document.querySelectorAll('.evidence-checkbox:checked');
+    if(checked.length===0){event.preventDefault();return;}
+    document.getElementById('bulkActionInput').value=action;
+}
 </script>
 <script src="../assets/js/main.js"></script>
 </body>
