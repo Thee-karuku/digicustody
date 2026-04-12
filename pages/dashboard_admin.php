@@ -58,6 +58,29 @@ $monthly = $pdo->query("
     WHERE uploaded_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
     GROUP BY month, sort_key ORDER BY sort_key ASC")->fetchAll();
 
+// Case status breakdown (for doughnut chart)
+$case_status_data = $pdo->query("
+    SELECT status, COUNT(*) as cnt 
+    FROM cases 
+    GROUP BY status")->fetchAll();
+
+// Evidence uploads per day (last 30 days - for bar chart)
+$daily_uploads = $pdo->query("
+    SELECT DATE(uploaded_at) as date, COUNT(*) as cnt
+    FROM evidence
+    WHERE uploaded_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+    GROUP BY DATE(uploaded_at)
+    ORDER BY date ASC")->fetchAll();
+
+// Evidence count per analyst (for horizontal bar chart)
+$analyst_workload = $pdo->query("
+    SELECT u.full_name, COUNT(e.id) as evidence_count
+    FROM users u
+    LEFT JOIN evidence e ON e.uploaded_by = u.id
+    WHERE u.role = 'analyst' AND u.status = 'active'
+    GROUP BY u.id, u.full_name
+    ORDER BY evidence_count DESC")->fetchAll();
+
 // Handle approve/reject requests inline
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['req_action'])) {
     $req_id  = (int)$_POST['req_id'];
@@ -222,7 +245,31 @@ $msg = $_GET['msg'] ?? '';
     </div>
 </div>
 
-<!-- Row 1: Chart + Integrity + Users by role -->
+<!-- Row 1: Charts -->
+<div class="grid-3" style="margin-bottom:20px;">
+
+    <!-- Case Status Doughnut Chart -->
+    <div class="section-card">
+        <div class="section-head">
+            <h2><i class="fas fa-chart-pie"></i> Case Status</h2>
+        </div>
+        <div class="chart-wrap" style="height:200px;">
+            <canvas id="caseStatusChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Evidence Uploads per Day (Last 30 Days) Bar Chart -->
+    <div class="section-card" style="grid-column:span 2;">
+        <div class="section-head">
+            <h2><i class="fas fa-chart-bar"></i> Evidence Uploads (Last 30 Days)</h2>
+        </div>
+        <div class="chart-wrap" style="height:200px;">
+            <canvas id="dailyUploadsChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Row 2: More Charts + Integrity -->
 <div class="grid-3" style="margin-bottom:20px;">
 
     <!-- Monthly uploads chart -->
@@ -274,6 +321,16 @@ $msg = $_GET['msg'] ?? '';
                 <div class="storage-fill" style="width:<?= $pct ?>%"></div>
             </div>
             <p style="font-size:11.5px;color:var(--muted);"><?= $pct ?>% of storage used</p>
+        </div>
+    </div>
+
+    <!-- Analyst Workload Chart -->
+    <div class="section-card">
+        <div class="section-head">
+            <h2><i class="fas fa-users"></i> Analyst Workload</h2>
+        </div>
+        <div class="chart-wrap" style="height:220px;">
+            <canvas id="analystWorkloadChart"></canvas>
         </div>
     </div>
 </div>
@@ -507,6 +564,46 @@ new Chart(ctx,{
         }
     }
 });
+
+// Case Status Doughnut Chart
+(function(){
+    const ctx=document.getElementById('caseStatusChart');
+    if(!ctx)return;
+    const labels=[<?= implode(',',array_map(fn($s)=>"'".e($s['status'])."'",$case_status_data)) ?>];
+    const data=[<?= implode(',',array_map(fn($s)=>$s['cnt'],$case_status_data)) ?>];
+    const colors=['#3b82f6','#10b981','#6b7280','#f59e0b'];
+    new Chart(ctx,{
+        type:'doughnut',
+        data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:'#6b82a0',padding:12,usePointStyle:true}}}}
+    });
+})();
+
+// Daily Uploads Bar Chart (Last 30 Days)
+(function(){
+    const ctx=document.getElementById('dailyUploadsChart');
+    if(!ctx)return;
+    const labels=[<?= implode(',',array_map(fn($d)=>"'".e($d['date'])."'",$daily_uploads)) ?>];
+    const data=[<?= implode(',',array_map(fn($d)=>$d['cnt'],$daily_uploads)) ?>];
+    new Chart(ctx,{
+        type:'bar',
+        data:{labels,datasets:[{label:'Uploads',data,backgroundColor:'#c9a84c',borderRadius:4}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#6b82a0',font:{size:9},maxRotation:45}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#6b82a0',font:{size:10},stepSize:1}}}}
+    });
+})();
+
+// Analyst Workload Horizontal Bar Chart
+(function(){
+    const ctx=document.getElementById('analystWorkloadChart');
+    if(!ctx)return;
+    const labels=[<?= implode(',',array_map(fn($a)=>"'".e($a['full_name'])."'",$analyst_workload)) ?>];
+    const data=[<?= implode(',',array_map(fn($a)=>$a['evidence_count'],$analyst_workload)) ?>];
+    new Chart(ctx,{
+        type:'bar',
+        data:{labels,datasets:[{label:'Evidence',data,backgroundColor:'#10b981',borderRadius:4}]},
+        options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#6b82a0',font:{size:10}}},y:{grid:{display:false},ticks:{color:'#f0f4fa',font:{size:11}}}}}
+    });
+})();
 </script>
 </body>
 </html>
