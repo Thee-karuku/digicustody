@@ -31,8 +31,15 @@ $ev_conditions = [];
 $ev_params = [];
 
 if ($q !== '') {
-    $ev_conditions[] = "(e.evidence_number LIKE ? OR e.title LIKE ? OR e.description LIKE ? OR e.file_name LIKE ?)";
-    $ev_params[] = $s; $ev_params[] = $s; $ev_params[] = $s; $ev_params[] = $s;
+    // Use FULLTEXT search for terms 3+ characters, fallback to LIKE for short terms
+    if (strlen($q) >= 3) {
+        $ev_conditions[] = "MATCH(e.title, e.description, e.collection_notes) AGAINST(? IN NATURAL LANGUAGE MODE)";
+        $ev_params[] = $q;
+    } else {
+        $s = "%$q%";
+        $ev_conditions[] = "(e.evidence_number LIKE ? OR e.title LIKE ? OR e.description LIKE ? OR e.file_name LIKE ?)";
+        $ev_params[] = $s; $ev_params[] = $s; $ev_params[] = $s; $ev_params[] = $s;
+    }
 }
 
 if ($ev_type) {
