@@ -56,6 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         "Your account has been created. Username: $username",'success');
                     audit_log($pdo,$uid,$_SESSION['username'],'admin','account_created',
                         'user',$new_id,$full_name,"Admin created account: $username ($role)");
+                    cache_delete('analysts_list');
                     $msg = "User account for <strong>$full_name</strong> created successfully.";
                 }
                 }

@@ -37,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cid = $pdo->lastInsertId();
                 // Auto-grant case_access to creator
                 grant_case_access($pdo, $cid, $uid, $uid);
+                cache_delete_prefix('cases_list');
                 
                 // If analyst suggested (investigators) or assigned (admins), add to case
                 if ($suggested_analyst > 0) {
@@ -104,16 +105,21 @@ if ($filter_status   !== '') { $where[] = "status=?";   $params[] = $filter_stat
 if ($filter_priority !== '') { $where[] = "priority=?"; $params[] = $filter_priority; }
 
 $where_sql = implode(' AND ', $where);
-$cases_stmt = $pdo->prepare("
-    SELECT c.*, u.full_name AS creator_name,
-           (SELECT COUNT(*) FROM evidence e WHERE e.case_id=c.id) AS evidence_count
-    FROM cases c
-    JOIN users u ON u.id=c.created_by
-    WHERE $where_sql
-    ORDER BY c.$sort $dir
-");
-$cases_stmt->execute($params);
-$cases = $cases_stmt->fetchAll(PDO::FETCH_ASSOC);
+$cache_key = "cases_list_{$role}_{$uid}_" . md5($where_sql . implode('', $params));
+$cases = cache_get($cache_key, 60);
+if ($cases === null) {
+    $cases_stmt = $pdo->prepare("
+        SELECT c.*, u.full_name AS creator_name,
+               (SELECT COUNT(*) FROM evidence e WHERE e.case_id=c.id) AS evidence_count
+        FROM cases c
+        JOIN users u ON u.id=c.created_by
+        WHERE $where_sql
+        ORDER BY c.$sort $dir
+    ");
+    $cases_stmt->execute($params);
+    $cases = $cases_stmt->fetchAll(PDO::FETCH_ASSOC);
+    cache_set($cache_key, $cases, 60);
+}
 
 // Stats — scoped by role
 if (is_admin()) {

@@ -26,17 +26,21 @@ $cases = $pdo->query("
     ORDER BY created_at DESC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// Fetch active analysts with workload info (one case at a time)
-$analysts = $pdo->query("
-    SELECT u.id, u.full_name, u.username, u.department,
-           (SELECT COUNT(DISTINCT c.id) FROM cases c
-            WHERE c.assigned_analyst = u.id AND c.status IN ('open','under_investigation')) AS active_cases,
-           (SELECT COUNT(DISTINCT e.id) FROM evidence e
-            WHERE e.assigned_analyst = u.id AND e.analysis_status IN ('assigned','in_progress')) AS active_evidence
-    FROM users u
-    WHERE u.role='analyst' AND u.status='active'
-    ORDER BY u.full_name
-")->fetchAll(PDO::FETCH_ASSOC);
+// Fetch active analysts with workload info (one case at a time) - cached for 60s
+$analysts = cache_get('analysts_list', 60);
+if ($analysts === null) {
+    $analysts = $pdo->query("
+        SELECT u.id, u.full_name, u.username, u.department,
+               (SELECT COUNT(DISTINCT c.id) FROM cases c
+                WHERE c.assigned_analyst = u.id AND c.status IN ('open','under_investigation')) AS active_cases,
+               (SELECT COUNT(DISTINCT e.id) FROM evidence e
+                WHERE e.assigned_analyst = u.id AND e.analysis_status IN ('assigned','in_progress')) AS active_evidence
+        FROM users u
+        WHERE u.role='analyst' AND u.status='active'
+        ORDER BY u.full_name
+    ")->fetchAll(PDO::FETCH_ASSOC);
+    cache_set('analysts_list', $analysts, 60);
+}
 
 // ── Handle new case creation (AJAX) ──────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'create_case') {

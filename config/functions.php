@@ -1395,6 +1395,39 @@ function log_security_event($pdo, $event_type, $details = []) {
     }
 }
 
+function cache_get($key, $ttl = 60) {
+    $cache_dir = sys_get_temp_dir() . '/digicustody_cache';
+    if (!is_dir($cache_dir)) { @mkdir($cache_dir, 0750, true); }
+    $file = $cache_dir . '/' . md5($key) . '.cache';
+    if (!file_exists($file)) { return null; }
+    $data = unserialize(file_get_contents($file));
+    if (!$data || $data['expires'] < time()) { @unlink($file); return null; }
+    return $data['value'];
+}
+
+function cache_set($key, $value, $ttl = 60) {
+    $cache_dir = sys_get_temp_dir() . '/digicustody_cache';
+    if (!is_dir($cache_dir)) { @mkdir($cache_dir, 0750, true); }
+    $file = $cache_dir . '/' . md5($key) . '.cache';
+    $data = ['value' => $value, 'expires' => time() + $ttl];
+    @file_put_contents($file, serialize($data), LOCK_EX);
+}
+
+function cache_delete($key) {
+    $cache_dir = sys_get_temp_dir() . '/digicustody_cache';
+    $file = $cache_dir . '/' . md5($key) . '.cache';
+    if (file_exists($file)) { @unlink($file); }
+}
+
+function cache_delete_prefix($prefix) {
+    $cache_dir = sys_get_temp_dir() . '/digicustody_cache';
+    if (!is_dir($cache_dir)) { return; }
+    foreach (glob($cache_dir . '/*.cache') as $file) {
+        $data = @unserialize(file_get_contents($file));
+        if ($data && strpos(basename($file), md5($prefix)) === 0) { @unlink($file); }
+    }
+}
+
 function validate_evidence_access($pdo, $evidence_id, $user_id, $role) {
     $stmt = $pdo->prepare("SELECT id, case_id, current_custodian, uploaded_by, status FROM evidence WHERE id = ?");
     $stmt->execute([$evidence_id]);
