@@ -77,10 +77,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
                     $_SESSION['user_id']       = $user['id'];
                     $_SESSION['username']      = $user['username'];
                     $_SESSION['full_name']     = $user['full_name'];
-                    $_SESSION['role']          = $user['role'];
-                    $_SESSION['email']         = $user['email'];
-                    $_SESSION['last_activity'] = time();
-                    $_SESSION['require_2fa']   = ($user['two_factor_enabled'] == 1);
+                    $_SESSION['role']           = $user['role'];
+                    $_SESSION['email']          = $user['email'];
+                    $_SESSION['last_activity']  = time();
+                    $_SESSION['theme']          = $user['theme_preference'] ?? 'dark';
+                    $_SESSION['require_2fa']    = ($user['two_factor_enabled'] == 1);
                     $pdo->prepare("UPDATE users SET last_login=NOW() WHERE id=?")->execute([$user['id']]);
                     audit_log($pdo,$user['id'],$user['username'],$user['role'],'login',null,null,null,'User logged in',$ip,$_SERVER['HTTP_USER_AGENT']??'');
                     header('Location: dashboard.php'); exit;

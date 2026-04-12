@@ -27,6 +27,25 @@
     --radius-lg:  14px;
 }
 
+[data-theme="light"] {
+    --bg:         #f5f7fa;
+    --surface:    #ffffff;
+    --surface2:   #e8ecf1;
+    --surface3:   #dde3ea;
+    --border:     rgba(0,0,0,0.08);
+    --border2:    rgba(0,0,0,0.15);
+    --gold:       #b8962e;
+    --gold2:      #9a7a22;
+    --gold-dim:   rgba(184,150,46,0.12);
+    --text:       #1a2332;
+    --muted:      #5a6a7e;
+    --dim:        #b8c4d4;
+    --danger:     #dc2626;
+    --success:    #16a34a;
+    --warning:    #d97706;
+    --info:       #2563eb;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {

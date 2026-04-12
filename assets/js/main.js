@@ -78,3 +78,36 @@ function toggleUserMenu() {
     if (ud) ud.classList.toggle('open');
     if (nd) nd.classList.remove('open');
 }
+
+// Theme toggle
+function toggleTheme() {
+    var html = document.documentElement;
+    var icon = document.getElementById('themeIcon');
+    var current = html.getAttribute('data-theme') || 'dark';
+    var next = current === 'dark' ? 'light' : 'dark';
+    
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    
+    if (icon) {
+        icon.className = next === 'dark' ? 'fas fa-moon' : 'fas fa-sun';
+    }
+    
+    // Save to server
+    fetch('api/save_theme.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'theme=' + encodeURIComponent(next)
+    }).catch(function() {});
+}
+
+// Initialize theme on load
+(function() {
+    // Try session theme first (from login), then localStorage, default dark
+    var theme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+    var icon = document.getElementById('themeIcon');
+    if (icon) {
+        icon.className = theme === 'dark' ? 'fas fa-moon' : 'fas fa-sun';
+    }
+})();

@@ -23,6 +23,11 @@ $base     = $in_pages ? '../' : '';
                 autocomplete="off">
         </div>
 
+        <!-- Theme Toggle -->
+        <button class="icon-btn" id="themeToggle" title="Toggle theme" onclick="toggleTheme()">
+            <i class="fas fa-moon" id="themeIcon"></i>
+        </button>
+
         <!-- Notifications -->
         <div class="notif-wrap" id="notifWrap">
             <button class="icon-btn" onclick="toggleNotif()" id="notifBtn" title="Notifications">
