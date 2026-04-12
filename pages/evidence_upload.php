@@ -70,8 +70,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upload_file') {
     header('Content-Type: application/json');
 
-    // Rate limit uploads
-    if (!rate_limit_check($pdo, 'upload', $_SERVER['REMOTE_ADDR'] ?? 'unknown', 30, 60)) {
+    // Rate limit uploads (20 per minute per IP)
+    if (!rate_limit_check($pdo, 'upload', $_SERVER['REMOTE_ADDR'] ?? 'unknown', 20, 60)) {
         echo json_encode(['success'=>false,'error'=>'Too many upload attempts. Please wait.']); exit;
     }
 

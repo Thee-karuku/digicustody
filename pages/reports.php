@@ -66,23 +66,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         elseif ($action === 'submit_report') {
-            $evidence_id     = (int)($_POST['evidence_id'] ?? 0);
-            $title           = trim($_POST['title'] ?? '');
-            $summary         = trim($_POST['summary'] ?? '');
-            $findings        = trim($_POST['findings'] ?? '');
-            $conclusions     = trim($_POST['conclusions'] ?? '');
-            $recommendations = trim($_POST['recommendations'] ?? '');
-            $tools_used      = trim($_POST['tools_used'] ?? '');
-            $report_type     = trim($_POST['report_type'] ?? 'general');
-            $severity        = trim($_POST['severity'] ?? 'medium');
-            $draft_id        = (int)($_POST['draft_id'] ?? 0);
-
-            if (!$evidence_id || empty($title) || empty($summary) || empty($findings)) {
-                $err = 'Evidence, title, summary and findings are required.';
+            // Rate limit report submissions (10 per minute per IP)
+            if (!rate_limit_check($pdo, 'report_submit', $_SERVER['REMOTE_ADDR'] ?? 'unknown', 10, 60)) {
+                $err = 'Too many report submissions. Please wait.';
             } else {
-                $ev = $pdo->prepare("SELECT case_id FROM evidence WHERE id=?");
-                $ev->execute([$evidence_id]);
-                $ev = $ev->fetch(PDO::FETCH_ASSOC);
+                $evidence_id     = (int)($_POST['evidence_id'] ?? 0);
+                $title           = trim($_POST['title'] ?? '');
+                $summary         = trim($_POST['summary'] ?? '');
+                $findings        = trim($_POST['findings'] ?? '');
+                $conclusions     = trim($_POST['conclusions'] ?? '');
+                $recommendations = trim($_POST['recommendations'] ?? '');
+                $tools_used      = trim($_POST['tools_used'] ?? '');
+                $report_type     = trim($_POST['report_type'] ?? 'general');
+                $severity        = trim($_POST['severity'] ?? 'medium');
+                $draft_id        = (int)($_POST['draft_id'] ?? 0);
+
+                if (!$evidence_id || empty($title) || empty($summary) || empty($findings)) {
+                    $err = 'Evidence, title, summary and findings are required.';
+                } else {
+                    $ev = $pdo->prepare("SELECT case_id FROM evidence WHERE id=?");
+                    $ev->execute([$evidence_id]);
+                    $ev = $ev->fetch(PDO::FETCH_ASSOC);
 
                 if (!$ev) { $err = 'Evidence not found.'; }
                 else {
@@ -103,6 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     audit_log($pdo,$uid,$_SESSION['username'],$role,'report_submitted','report',$rid,$rnum,"Analysis report submitted: $rnum — $title");
                     $msg = "Report <strong>$rnum</strong> submitted successfully.";
                 }
+            }
             }
         }
 
