@@ -105,7 +105,7 @@ if ($filter_status   !== '') { $where[] = "status=?";   $params[] = $filter_stat
 if ($filter_priority !== '') { $where[] = "priority=?"; $params[] = $filter_priority; }
 
 $where_sql = implode(' AND ', $where);
-$cache_key = "cases_list_{$role}_{$uid}_" . md5($where_sql . implode('', $params));
+$cache_key = "cases_list_{$role}_{$uid}_{$sort}_{$dir}_" . md5($where_sql . json_encode($params));
 $cases = cache_get($cache_key, 60);
 if ($cases === null) {
     $cases_stmt = $pdo->prepare("
