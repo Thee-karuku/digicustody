@@ -171,7 +171,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['bulk_action'])) {
                         $pdo->prepare("INSERT INTO hash_verifications (evidence_id, verified_by, sha256_at_verification, sha3_256_at_verification, original_sha256, original_sha3_256, integrity_status, notes) VALUES(?,?,?,?,?,?,?,?)")
                             ->execute([$eid, $uid, $cur_sha, $cur_sha3, $ev['sha256_hash'], $ev['sha3_256_hash'], $status, 'Bulk verification']);
                         if ($status === 'tampered') {
-                            $pdo->prepare("UPDATE evidence SET status='flagged' WHERE id=?")->execute([$eid]);
+                            $pdo->prepare("UPDATE evidence SET status='flagged', pre_flag_status=COALESCE(pre_flag_status, status) WHERE id=?")->execute([$eid]);
+                            foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm)
+                                send_notification($pdo, $adm['id'], '⚠ Integrity Alert', "Evidence {$ev['evidence_number']} FAILED integrity check — possible tampering!", 'danger', 'evidence', $eid);
                         }
                         audit_log($pdo, $uid, $_SESSION['username'], $role, 'hash_verified', 'evidence', $eid, $ev['evidence_number'], "Bulk integrity check: $status");
                         $processed++;
