@@ -227,13 +227,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['bulk_action'])) {
                             continue;
                         }
                         if ($ev['status'] === 'flagged') {
-                            $skipped[] = "{$ev['evidence_number']}: Cannot transfer flagged evidence";
+                            $skipped[] = "{$ev['evidence_number']} is flagged and cannot be transferred";
                             continue;
                         }
                         $caseStmt->execute([$ev['case_id']]);
                         $case = $caseStmt->fetch(PDO::FETCH_ASSOC);
-                        if ($case && $case['status'] === 'closed') {
-                            $skipped[] = "{$ev['evidence_number']}: Cannot transfer evidence from closed case";
+                        if ($case && in_array($case['status'], ['closed', 'archived'])) {
+                            $skipped[] = "{$ev['evidence_number']}: Case is closed";
+                            continue;
+                        }
+                        if ($ev['current_custodian'] !== $uid && $role !== 'admin') {
+                            $skipped[] = "{$ev['evidence_number']}: You are not the current custodian";
                             continue;
                         }
                         
