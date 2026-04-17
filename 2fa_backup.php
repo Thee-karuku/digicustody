@@ -1,11 +1,12 @@
 <?php
-require_once 'config/db.php';
+ob_start();
 require_once 'config/functions.php';
-
 set_secure_session_config();
 session_start();
 set_security_headers();
+require_once 'config/db.php';
 if (!isset($_SESSION['pending_2fa_user'])) {
+    ob_end_clean();
     header('Location: login.php');
     exit;
 }
@@ -15,10 +16,12 @@ $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
 if (!$user) {
+    ob_end_clean();
     header('Location: login.php');
     exit;
 }
 if (empty($user['backup_codes'])) {
+    ob_end_clean();
     header('Location: verify_2fa.php');
     exit;
 }
@@ -27,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $attempts = $_SESSION['2fa_attempts'] ?? 0;
     if ($attempts >= 5) {
         unset($_SESSION['pending_2fa_user'], $_SESSION['2fa_attempts']);
+        ob_end_clean();
         header('Location: login.php?error=locked');
         exit;
     }
@@ -58,6 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa_backup', null, null, null, '2FA backup code used', $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
                 
+                ob_end_clean();
                 header('Location: dashboard.php');
                 exit;
             } else {

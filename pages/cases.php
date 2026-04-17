@@ -7,7 +7,7 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 
 $page_title = 'Cases';
 $uid  = $_SESSION['user_id'];
@@ -51,9 +51,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ->execute([$suggested_analyst, $cid]);
                         grant_case_access($pdo, $cid, $suggested_analyst, $uid);
                         
-                        // Get analyst name for notification
-                        $analyst_name = $pdo->prepare("SELECT full_name FROM users WHERE id=?")->execute([$suggested_analyst]);
-                        $analyst_name = $pdo->query("SELECT full_name FROM users WHERE id=$suggested_analyst")->fetchColumn();
+                        $analyst_stmt = $pdo->prepare("SELECT full_name FROM users WHERE id=?");
+                        $analyst_stmt->execute([$suggested_analyst]);
+                        $analyst_name = $analyst_stmt->fetchColumn();
                         
                         send_notification($pdo, $suggested_analyst, 'Case Assigned',
                             "You have been assigned to case $case_num: $title", 'info', 'case', $cid);

@@ -1,10 +1,9 @@
 <?php
-require_once 'config/db.php';
 require_once 'config/functions.php';
-
 set_secure_session_config();
 session_start();
 set_security_headers();
+require_once 'config/db.php';
 
 cleanup_old_login_attempts($pdo);
 if (isset($_SESSION['user_id'])) { header('Location: dashboard.php'); exit; }

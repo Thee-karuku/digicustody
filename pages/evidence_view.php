@@ -7,7 +7,7 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 
 $page_title = 'Evidence Details';
 $uid  = $_SESSION['user_id'];
@@ -500,7 +500,7 @@ if($verified_msg==='intact'): ?>
                 <?php if($v['notes']): ?><p style="font-size:12px;color:var(--dim);font-style:italic;margin-top:3px">"<?= e($v['notes']) ?>"</p><?php endif; ?>
                 <div style="margin-top:8px;background:var(--surface2);border-radius:6px;padding:8px 12px;font-size:11px;">
                     <p style="color:var(--muted);margin-bottom:3px">SHA-256 at check: <span style="font-family:'Courier New',monospace;color:<?= $v['sha256_at_verification']===$v['original_sha256']?'var(--success)':'var(--danger)' ?>"><?= e($v['sha256_at_verification']) ?></span></p>
-                    <p style="color:var(--muted)">MD5 at check: <span style="font-family:'Courier New',monospace;color:<?= $v['md5_at_verification']===$v['original_md5']?'var(--success)':'var(--danger)' ?>"><?= e($v['md5_at_verification']) ?></span></p>
+                    <p style="color:var(--muted)">SHA3-256 at check: <span style="font-family:'Courier New',monospace;color:<?= $v['sha3_256_at_verification']===$v['original_sha3_256']?'var(--success)':'var(--danger)' ?>"><?= e($v['sha3_256_at_verification']) ?></span></p>
                 </div>
             </div>
         </div>
@@ -629,7 +629,7 @@ function showImagePreview(evidenceId) {
     modal.style.display = 'flex';
     img.src = '';
     
-    fetch('api/generate_preview_token.php', {
+    fetch('../api/generate_preview_token.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'evidence_id=' + evidenceId
@@ -639,7 +639,7 @@ function showImagePreview(evidenceId) {
         if (data.success) {
             img.src = 'download.php?token=' + data.token;
             img.onload = function() {
-                fetch('api/revoke_token.php', {
+                fetch('../api/revoke_token.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: 'token=' + data.token

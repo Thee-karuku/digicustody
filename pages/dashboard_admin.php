@@ -81,6 +81,12 @@ $analyst_workload = $pdo->query("
     GROUP BY u.id, u.full_name
     ORDER BY evidence_count DESC")->fetchAll();
 
+// Daily metrics (last 7 days)
+$daily_metrics = $pdo->query("
+    SELECT * FROM daily_metrics 
+    ORDER BY metric_date DESC 
+    LIMIT 7")->fetchAll();
+
 // Handle approve/reject requests inline
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['req_action'])) {
     $req_id  = (int)$_POST['req_id'];
@@ -92,8 +98,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['req_action'])) {
             ->execute([$action, $notes, $_SESSION['user_id'], $req_id]);
 
         if ($action === 'approved') {
-            // Get request details and create user account
-            $req = $pdo->prepare("SELECT * FROM account_requests WHERE id=?")->execute([$req_id]) ? $pdo->prepare("SELECT * FROM account_requests WHERE id=?")->execute([$req_id]) : null;
             $stmt = $pdo->prepare("SELECT * FROM account_requests WHERE id=?");
             $stmt->execute([$req_id]);
             $req = $stmt->fetch();
@@ -244,6 +248,37 @@ $msg = $_GET['msg'] ?? '';
         </div>
     </div>
 </div>
+
+<!-- Metrics Summary Panel -->
+<?php if (!empty($daily_metrics)): ?>
+<div class="section-card" style="margin-bottom:20px;">
+    <div class="section-head">
+        <h2><i class="fas fa-chart-simple"></i> Daily Metrics (Last 7 Days)</h2>
+    </div>
+    <table class="data-table" style="margin-bottom:0;">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Uploads</th>
+                <th>Downloads</th>
+                <th>Data Added</th>
+                <th>Unique Users</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach (array_reverse($daily_metrics) as $m): ?>
+            <tr>
+                <td><?= date('M d, Y', strtotime($m['metric_date'])) ?></td>
+                <td><span class="badge green"><?= (int)$m['total_uploads'] ?></span></td>
+                <td><span class="badge blue"><?= (int)$m['total_downloads'] ?></span></td>
+                <td><?= format_filesize($m['total_evidence_size']) ?></td>
+                <td><?= (int)$m['unique_users'] ?></td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+<?php endif; ?>
 
 <!-- Row 1: Charts -->
 <div class="grid-3" style="margin-bottom:20px;">

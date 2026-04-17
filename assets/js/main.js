@@ -9,10 +9,10 @@ function goBack() {
         if (referrer && referrer !== window.location.href) {
             window.history.back();
         } else {
-            window.location.href = 'dashboard.php';
+            window.location.href = (window.BASE_URL || '') + 'dashboard.php';
         }
     } else {
-        window.location.href = 'dashboard.php';
+        window.location.href = (window.BASE_URL || '') + 'dashboard.php';
     }
 }
 
@@ -59,7 +59,7 @@ function handleSearch(e) {
     if (e.key === 'Enter') {
         var v = document.getElementById('globalSearch');
         if (v && v.value.trim()) {
-            window.location = 'evidence.php?search=' + encodeURIComponent(v.value.trim());
+            window.location = (window.BASE_URL || '') + 'evidence.php?search=' + encodeURIComponent(v.value.trim());
         }
     }
 }
@@ -94,7 +94,7 @@ function toggleTheme() {
     }
     
     // Save to server
-    fetch('api/save_theme.php', {
+    fetch((window.BASE_URL || '') + 'api/save_theme.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'theme=' + encodeURIComponent(next)

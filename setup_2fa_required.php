@@ -1,10 +1,9 @@
 <?php
-require_once 'config/db.php';
 require_once 'config/functions.php';
-
 set_secure_session_config();
 session_start();
 set_security_headers();
+require_once 'config/db.php';
 if (!isset($_SESSION['pending_2fa_setup'])) {
     header('Location: login.php');
     exit;

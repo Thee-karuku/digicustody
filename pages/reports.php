@@ -6,7 +6,7 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 
 $page_title = 'Analysis Reports';
 $uid  = $_SESSION['user_id'];
@@ -571,7 +571,7 @@ function openReportModal() {
 }
 
 function editDraft(id) {
-    fetch('api/get_draft.php?id=' + id)
+    fetch('../api/get_draft.php?id=' + id)
         .then(r => r.json())
         .then(data => {
             if(data.success) {

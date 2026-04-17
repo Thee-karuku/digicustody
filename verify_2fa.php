@@ -1,11 +1,12 @@
 <?php
-require_once 'config/db.php';
+ob_start();
 require_once 'config/functions.php';
-
 set_secure_session_config();
 session_start();
 set_security_headers();
+require_once 'config/db.php';
 if (!isset($_SESSION['pending_2fa_user'])) {
+    ob_end_clean();
     header('Location: login.php');
     exit;
 }
@@ -17,6 +18,7 @@ $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
 if (!$user) {
+    ob_end_clean();
     header('Location: login.php');
     exit;
 }
@@ -25,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $attempts = $_SESSION['2fa_attempts'] ?? 0;
     if ($attempts >= 5) {
         unset($_SESSION['pending_2fa_user'], $_SESSION['2fa_attempts']);
+        ob_end_clean();
         header('Location: login.php?error=locked');
         exit;
     }
@@ -36,9 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if (!empty($user['two_factor_secret'])) {
             if (verify_2fa_code($user['two_factor_secret'], $code)) {
-                unset($_SESSION['2fa_attempts']);
-                // 2FA successful
-                secure_session_regenerate();
+                unset($_SESSION['2fa_attempts'], $_SESSION['pending_2fa_user']);
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['username'] = $user['username'];
                 $_SESSION['full_name'] = $user['full_name'];
@@ -47,6 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['last_activity'] = time();
                 $_SESSION['2fa_verified'] = true;
                 $_SESSION['require_2fa'] = true;
+                secure_session_regenerate();
                 
                 // Remember device for 30 days if checkbox was checked
                 if ($remember_device) {
@@ -70,10 +72,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ]);
                 }
                 
-                unset($_SESSION['pending_2fa_user']);
-                
                 audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa', null, null, null, '2FA verification successful' . ($remember_device ? ' (device remembered for 30 days)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
                 
+                ob_end_clean();
                 header('Location: dashboard.php');
                 exit;
             }
@@ -83,11 +84,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($user['backup_codes'])) {
             $result = verify_backup_code($user['backup_codes'], $code);
             if ($result['valid']) {
-                // Update backup codes
                 $pdo->prepare("UPDATE users SET backup_codes = ? WHERE id = ?")
                     ->execute([json_encode($result['remaining_codes']), $user_id]);
                 
-                secure_session_regenerate();
+                unset($_SESSION['2fa_attempts'], $_SESSION['pending_2fa_user']);
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['username'] = $user['username'];
                 $_SESSION['full_name'] = $user['full_name'];
@@ -96,6 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['last_activity'] = time();
                 $_SESSION['2fa_verified'] = true;
                 $_SESSION['require_2fa'] = true;
+                secure_session_regenerate();
                 
                 // Remember device for 30 days if checkbox was checked
                 if ($remember_device) {
@@ -119,16 +120,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ]);
                 }
                 
-                unset($_SESSION['pending_2fa_user']);
-                
                 audit_log($pdo, $user['id'], $user['username'], $user['role'], 'login_2fa_backup', null, null, null, '2FA backup code used' . ($remember_device ? ' (device remembered for 30 days)' : ''), $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
                 
+                ob_end_clean();
                 header('Location: dashboard.php');
                 exit;
             }
         }
         
         $error = 'Invalid verification code.';
+        $_SESSION['2fa_attempts'] = $attempts + 1;
     }
 }
 $csrf = csrf_token();

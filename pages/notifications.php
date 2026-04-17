@@ -7,10 +7,28 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 
 $page_title = 'Notifications';
 $uid = $_SESSION['user_id'];
+
+// Handle accept/reject collab invite
+if (isset($_GET['accept_invite'])) {
+    $invite_id = (int)$_GET['accept_invite'];
+    $result = accept_collab_invite($pdo, $invite_id, $uid);
+    if ($result['success']) {
+        header('Location: case_view.php?id=' . $result['case_id'] . '&msg=collab_accepted');
+    } else {
+        header('Location: notifications.php?error=accept_failed');
+    }
+    exit;
+}
+if (isset($_GET['reject_invite'])) {
+    $invite_id = (int)$_GET['reject_invite'];
+    reject_collab_invite($pdo, $invite_id, $uid);
+    header('Location: notifications.php?msg=invite_rejected');
+    exit;
+}
 
 // Mark all read
 if (isset($_GET['mark_all'])) {
@@ -106,6 +124,22 @@ $type_icons = ['info'=>'fa-circle-info','success'=>'fa-circle-check','warning'=>
             <p style="font-size:11.5px;color:var(--dim);"><?= time_ago($n['created_at']) ?> &nbsp;·&nbsp; <?= date('M j, Y H:i',strtotime($n['created_at'])) ?></p>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+            <?php if ($n['related_type'] === 'collab_invite' && $n['related_id']):
+                $invite_stmt = $pdo->prepare("SELECT id, status FROM case_collab_invites WHERE case_id = ? AND invited_user_id = ? AND status = 'pending' LIMIT 1");
+                $invite_stmt->execute([$n['related_id'], $uid]);
+                $invite = $invite_stmt->fetch();
+                if ($invite):
+            ?>
+            <a href="notifications.php?accept_invite=<?= $invite['id'] ?>" class="btn btn-sm" style="font-size:11px;background:var(--success);color:#000;padding:6px 12px;">
+                <i class="fas fa-check"></i> Accept
+            </a>
+            <a href="notifications.php?reject_invite=<?= $invite['id'] ?>" class="btn btn-outline btn-sm" style="font-size:11px;color:var(--danger);border-color:var(--danger);">
+                <i class="fas fa-xmark"></i> Reject
+            </a>
+            <?php else: ?>
+            <span style="font-size:11px;color:var(--muted);">Responded</span>
+            <?php endif; ?>
+            <?php else: ?>
             <?php if (!$n['is_read']): ?>
             <span style="width:8px;height:8px;border-radius:50%;background:var(--gold);display:block;"></span>
             <a href="notifications.php?mark=<?= $n['id'] ?>" class="btn btn-outline btn-sm" style="font-size:11px;">Mark read</a>
@@ -118,6 +152,7 @@ $type_icons = ['info'=>'fa-circle-info','success'=>'fa-circle-check','warning'=>
                 <i class="fas fa-arrow-right"></i> View
             </a>
             <?php endif; endif; ?>
+            <?php endif; ?>
         </div>
     </div>
     <?php endforeach; endif; ?>

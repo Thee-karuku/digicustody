@@ -8,7 +8,7 @@ require_once __DIR__."/../config/logger.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 if (!is_admin() && !is_investigator() && !is_analyst()) { header('Location: ../dashboard.php?error=access_denied'); exit; }
 
 $page_title = 'Verify Integrity';
@@ -44,69 +44,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verify_csrf($_POST['csrf_token']??'
     ob_start();
     
     if ($_POST['ajax'] === '1') {
+        set_exception_handler(null);
+        ini_set('display_errors', 0);
+        register_shutdown_function(function() {
+            $err = error_get_last();
+            if ($err && ($err['type'] & (E_ERROR | E_PARSE | E_COMPILE_ERROR))) {
+                if (!headers_sent()) header('Content-Type: application/json');
+                echo json_encode(['status' => 'error', 'message' => $err['message']]);
+            }
+        });
         set_time_limit(300);
         ignore_user_abort(true);
         ob_end_clean();
         header('Content-Type: application/json');
-        
-        $notes = trim($_POST['notes'] ?? '');
-        $file_path = $ev['file_path'];
-        if (!file_exists($file_path)) {
-            $fallback_path = UPLOAD_DIR . basename($ev['file_name']);
-            if (file_exists($fallback_path)) {
-                $file_path = $fallback_path;
-            }
-        }
-        if (file_exists($file_path)) {
-            if ($file_path !== $ev['file_path']) {
-                log_warning("evidence_verify: Using fallback path", ['evidence_id' => $id, 'path' => $file_path]);
-            }
-            $cur_sha256 = hash_file('sha256', $file_path);
-            $cur_sha3_256 = hash_file('sha3-256', $file_path);
-            $status     = ($cur_sha256 === $ev['sha256_hash'] && $cur_sha3_256 === $ev['sha3_256_hash'])
-                          ? 'intact' : 'tampered';
 
-            $pdo->prepare("INSERT INTO hash_verifications
-                (evidence_id,verified_by,sha256_at_verification,sha3_256_at_verification,
-                 original_sha256,original_sha3_256,integrity_status,notes)
-                VALUES(?,?,?,?,?,?,?,?)")
-                ->execute([$id,$uid,$cur_sha256,$cur_sha3_256,
-                           $ev['sha256_hash'],$ev['sha3_256_hash'],$status,$notes]);
+        try {
+            $notes = trim($_POST['notes'] ?? '');
+            $file_path = $ev['file_path'];
+            if (!file_exists($file_path)) {
+                $fallback_path = UPLOAD_DIR . basename($ev['file_name']);
+                if (file_exists($fallback_path)) {
+                    $file_path = $fallback_path;
+                }
+            }
+            if (file_exists($file_path)) {
+                if ($file_path !== $ev['file_path']) {
+                    log_warning("evidence_verify: Using fallback path", ['evidence_id' => $id, 'path' => $file_path]);
+                }
+                $cur_sha256 = hash_file('sha256', $file_path);
+                $cur_sha3_256 = hash_file('sha3-256', $file_path);
+                $sha256_match = ($cur_sha256 === $ev['sha256_hash']);
+                $sha3_match = (empty($ev['sha3_256_hash'])) || ($cur_sha3_256 === $ev['sha3_256_hash']);
+                $status = ($sha256_match && $sha3_match) ? 'intact' : 'tampered';
 
-            if ($status === 'tampered') {
+                $pdo->prepare("INSERT INTO hash_verifications
+                    (evidence_id,verified_by,sha256_at_verification,sha3_256_at_verification,
+                     original_sha256,original_sha3_256,integrity_status,notes)
+                    VALUES(?,?,?,?,?,?,?,?)")
+                    ->execute([$id,$uid,$cur_sha256,$cur_sha3_256,
+                               $ev['sha256_hash'],$ev['sha3_256_hash'],$status,$notes]);
+
+                if ($status === 'tampered') {
+                    $pdo->prepare("UPDATE evidence SET status='flagged', pre_flag_status=COALESCE(pre_flag_status, status) WHERE id=?")->execute([$id]);
+                    foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm)
+                        send_notification($pdo,$adm['id'],'⚠ Integrity Alert',
+                            "Evidence {$ev['evidence_number']} FAILED integrity check — possible tampering!",'danger','evidence',$id);
+                }
+
+                audit_log($pdo,$uid,$_SESSION['username'],$role,'hash_verified','evidence',$id,
+                    $ev['evidence_number'],
+                    "Integrity check: $status for {$ev['evidence_number']}",
+                    $_SERVER['REMOTE_ADDR']??'','',
+                    ['status'=>$status,'sha256_match'=>$cur_sha256===$ev['sha256_hash'],
+                     'sha3_256_match'=>$cur_sha3_256===$ev['sha3_256_hash'],'current_sha256'=>$cur_sha256,'current_sha3_256'=>$cur_sha3_256]);
+
+                $result = [
+                    'status'         => $status,
+                    'cur_sha256'     => $cur_sha256,
+                    'cur_sha3_256'   => $cur_sha3_256,
+                    'sha256_match'   => $cur_sha256   === $ev['sha256_hash'],
+                    'sha3_256_match' => $cur_sha3_256 === $ev['sha3_256_hash'],
+                    'file_size'      => filesize($file_path),
+                ];
+            } else {
+                $result = ['status' => 'file_missing', 'cur_sha256' => '', 'cur_sha3_256' => '', 'sha256_match' => false, 'sha3_256_match' => false];
                 $pdo->prepare("UPDATE evidence SET status='flagged', pre_flag_status=COALESCE(pre_flag_status, status) WHERE id=?")->execute([$id]);
+                $pdo->prepare("INSERT INTO hash_verifications (evidence_id,verified_by,sha256_at_verification,sha3_256_at_verification,original_sha256,original_sha3_256,integrity_status,notes) VALUES(?,?,?,?,?,?,?,?)")
+                    ->execute([$id,$uid,'','',$ev['sha256_hash'],$ev['sha3_256_hash'],'file_missing',$notes]);
                 foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm)
-                    send_notification($pdo,$adm['id'],'⚠ Integrity Alert',
-                        "Evidence {$ev['evidence_number']} FAILED integrity check — possible tampering!",'danger','evidence',$id);
+                    send_notification($pdo,$adm['id'],'⚠ Integrity Alert',"Evidence {$ev['evidence_number']} integrity check FAILED — file cannot be located on the server!",'danger','evidence',$id);
+                audit_log($pdo,$uid,$_SESSION['username'],$role,'hash_verified','evidence',$id,$ev['evidence_number'],"Integrity check: file_missing for {$ev['evidence_number']}",$_SERVER['REMOTE_ADDR']??'','');
             }
 
-            audit_log($pdo,$uid,$_SESSION['username'],$role,'hash_verified','evidence',$id,
-                $ev['evidence_number'],
-                "Integrity check: $status for {$ev['evidence_number']}",
-                $_SERVER['REMOTE_ADDR']??'','',
-                ['status'=>$status,'sha256_match'=>$cur_sha256===$ev['sha256_hash'],
-                 'sha3_256_match'=>$cur_sha3_256===$ev['sha3_256_hash'],'current_sha256'=>$cur_sha256,'current_sha3_256'=>$cur_sha3_256]);
-
-            $result = [
-                'status'       => $status,
-                'cur_sha256'   => $cur_sha256,
-                'cur_md5'      => $cur_md5,
-                'sha256_match' => $cur_sha256 === $ev['sha256_hash'],
-                'md5_match'    => $cur_md5    === $ev['md5_hash'],
-                'file_size'    => filesize($file_path),
-            ];
-        } else {
-            $result = ['status' => 'file_missing', 'cur_sha256' => '', 'cur_md5' => '', 'sha256_match' => false, 'md5_match' => false];
-            $pdo->prepare("UPDATE evidence SET status='flagged', pre_flag_status=COALESCE(pre_flag_status, status) WHERE id=?")->execute([$id]);
-            $pdo->prepare("INSERT INTO hash_verifications (evidence_id,verified_by,sha256_at_verification,md5_at_verification,original_sha256,original_md5,integrity_status,notes) VALUES(?,?,?,?,?,?,?,?)")
-                ->execute([$id,$uid,'','',$ev['sha256_hash'],$ev['md5_hash'],'file_missing',$notes]);
-            foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm)
-                send_notification($pdo,$adm['id'],'⚠ Integrity Alert',"Evidence {$ev['evidence_number']} integrity check FAILED — file cannot be located on the server!",'danger','evidence',$id);
-            audit_log($pdo,$uid,$_SESSION['username'],$role,'hash_verified','evidence',$id,$ev['evidence_number'],"Integrity check: file_missing for {$ev['evidence_number']}",$_SERVER['REMOTE_ADDR']??'','');
+            echo json_encode($result);
+            exit;
+        } catch (Throwable $e) {
+            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+            exit;
         }
-        
-        echo json_encode($result);
-        exit;
     }
     
     // Standard non-AJAX POST behavior
@@ -124,8 +139,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verify_csrf($_POST['csrf_token']??'
         }
         $cur_sha256 = hash_file('sha256', $file_path);
         $cur_sha3_256 = hash_file('sha3-256', $file_path);
-        $status     = ($cur_sha256 === $ev['sha256_hash'] && $cur_sha3_256 === $ev['sha3_256_hash'])
-                      ? 'intact' : 'tampered';
+        $sha256_match = ($cur_sha256 === $ev['sha256_hash']);
+        $sha3_match = ($ev['sha3_256_hash'] === null) || ($cur_sha3_256 === $ev['sha3_256_hash']);
+        $status = ($sha256_match && $sha3_match) ? 'intact' : 'tampered';
 
         $pdo->prepare("INSERT INTO hash_verifications
             (evidence_id,verified_by,sha256_at_verification,sha3_256_at_verification,
@@ -159,8 +175,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && verify_csrf($_POST['csrf_token']??'
     } else {
         $result = ['status' => 'file_missing', 'cur_sha256' => '', 'cur_sha3_256' => '', 'sha256_match' => false, 'sha3_256_match' => false];
         $pdo->prepare("UPDATE evidence SET status='flagged', pre_flag_status=COALESCE(pre_flag_status, status) WHERE id=?")->execute([$id]);
-        $pdo->prepare("INSERT INTO hash_verifications (evidence_id,verified_by,sha256_at_verification,md5_at_verification,original_sha256,original_md5,integrity_status,notes) VALUES(?,?,?,?,?,?,?,?)")
-            ->execute([$id,$uid,'','',$ev['sha256_hash'],$ev['md5_hash'],'file_missing',$notes]);
+        $pdo->prepare("INSERT INTO hash_verifications (evidence_id,verified_by,sha256_at_verification,sha3_256_at_verification,original_sha256,original_sha3_256,integrity_status,notes) VALUES(?,?,?,?,?,?,?,?)")
+            ->execute([$id,$uid,'','',$ev['sha256_hash'],$ev['sha3_256_hash'],'file_missing',$notes]);
         foreach ($pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll() as $adm)
             send_notification($pdo,$adm['id'],'⚠ Integrity Alert',"Evidence {$ev['evidence_number']} integrity check FAILED — file cannot be located on the server!",'danger','evidence',$id);
         audit_log($pdo,$uid,$_SESSION['username'],$role,'hash_verified','evidence',$id,$ev['evidence_number'],"Integrity check: file_missing for {$ev['evidence_number']}",$_SERVER['REMOTE_ADDR']??'','');
@@ -356,8 +372,8 @@ $csrf = csrf_token();
                 <p style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:8px">Evidence: <span style="color:var(--gold)"><?= e($ev['evidence_number']) ?></span></p>
                 <p style="font-size:12px;color:var(--muted);margin-bottom:4px">Original SHA-256:</p>
                 <p style="font-family:'Courier New',monospace;font-size:11px;color:var(--text);word-break:break-all;margin-bottom:8px"><?= e($ev['sha256_hash']) ?></p>
-                <p style="font-size:12px;color:var(--muted);margin-bottom:4px">Original MD5:</p>
-                <p style="font-family:'Courier New',monospace;font-size:11px;color:var(--text);word-break:break-all"><?= e($ev['md5_hash']) ?></p>
+                <p style="font-size:12px;color:var(--muted);margin-bottom:4px">Original SHA3-256:</p>
+                <p style="font-family:'Courier New',monospace;font-size:11px;color:var(--text);word-break:break-all"><?= e($ev['sha3_256_hash']) ?></p>
             </div>
             <form method="POST" action="?id=<?= $id ?>" id="verifyForm">
                 <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
@@ -510,7 +526,6 @@ document.getElementById('verifyForm').addEventListener('submit',async function(e
 });
 document.querySelectorAll('form[action*="clear_flag"]').forEach(f=>f.addEventListener('submit',async function(e){e.preventDefault();const b=document.getElementById('clearFlagBtn'),c=new FormData(this);if(!c.get('admin_note')){alert('Admin note is required');return;}b.innerHTML='<i class="fas fa-spinner fa-spin"></i> Clearing flag...';b.disabled=true;let r;try{const res=await fetch(this.action,{method:'POST',body:c});r=await res.json();}catch(err){b.innerHTML='<i class="fas fa-times"></i> Error';b.disabled=false;alert('Error: '+err.message);return;}if(r.success){b.innerHTML='<i class="fas fa-check"></i> Flag Cleared';b.disabled=false;alert('Flag cleared! Status restored to: '+r.status);window.location.reload();}else{b.innerHTML='<i class="fas fa-times"></i> Failed';b.disabled=false;alert(r.error||'Failed to clear flag');}}));
 document.getElementById('confirmTamperForm')?.addEventListener('submit',async function(e){e.preventDefault();const b=document.getElementById('confirmTamperBtn'),c=new FormData(this);if(!c.get('admin_note')){alert('Investigation conclusion is required');return;}b.innerHTML='<i class="fas fa-spinner fa-spin"></i> Closing investigation...';b.disabled=true;let r;try{const res=await fetch(this.action,{method:'POST',body:c});r=await res.json();}catch(err){b.innerHTML='<i class="fas fa-times"></i> Error';b.disabled=false;alert('Error: '+err.message);return;}if(r.success){b.innerHTML='<i class="fas fa-check"></i> Investigation Closed';b.disabled=false;alert('Tampering confirmed! Investigation closed.');window.location.reload();}else{b.innerHTML='<i class="fas fa-times"></i> Failed';b.disabled=false;alert(r.error||'Failed to confirm tampering');}});
-document.getElementById('verifyForm').addEventListener('submit',async function(e){e.preventDefault();const b=document.getElementById('verifyBtn'),f=this,c=new FormData(f);b.innerHTML='<i class="fas fa-spinner fa-spin"></i> <span class="pulse">Calculating hashes, please wait...</span>';b.disabled=true;let r;try{const res=await fetch(f.action,{method:'POST',body:c});r=await res.json();}catch(err){b.innerHTML='<i class="fas fa-times"></i> Error';b.disabled=false;alert('Verification failed: '+err.message);return;}if(r.status==='file_missing'){b.innerHTML='<i class="fas fa-times"></i> File Missing';b.disabled=false;document.getElementById('verifyResult').innerHTML='<div class="result-banner tampered"><div class="result-icon"><i class="fas fa-file-excel"></i></div><div><p style="font-family:Space Grotesk,sans-serif;font-size:18px;font-weight:700;color:var(--danger)">⚠ File Not Found</p><p style="font-size:13.5px;color:var(--muted);margin-top:4px">The evidence file could not be located on the server.</p></div></div>';return;}const intact=r.status==='intact',sp=r.sha256_match?'match':'mismatch',mp=r.md5_match?'match':'mismatch';b.innerHTML=intact?'<i class="fas fa-check"></i> Verified':'<i class="fas fa-times"></i> Tampered';b.disabled=false;document.getElementById('verifyResult').innerHTML='<div class="result-banner '+r.status+'"><div class="result-icon"><i class="fas '+(intact?'fa-shield-check':'fa-triangle-exclamation')+'"></i></div><div><p style="font-family:Space Grotesk,sans-serif;font-size:18px;font-weight:700;color:var('+(intact?'success':'danger')+')">'+(intact?'✓ Integrity Verified — File Intact':'⚠ INTEGRITY FAILURE — File May Be Tampered')+'</p><p style="font-size:13.5px;color:var(--muted);margin-top:4px">'+(intact?'Both SHA-256 and MD5 hashes match the originals recorded at upload.':'Hash mismatch detected. The current file hashes do not match the originals.')+'</p></div></div><div class="section-card" style="margin-bottom:20px;"><div class="section-head"><h2><i class="fas fa-fingerprint"></i> Hash Comparison</h2></div><div class="section-body padded"><div class="hash-compare"><div class="hc-box '+sp+'"><p class="hc-label">Original SHA-256 (at upload)</p><p class="hc-val">'+r.cur_sha256.substring(0,20)+'...</p></div><div class="hc-box '+sp+'"><p class="hc-label">Current SHA-256 '+(r.sha256_match?'<span style="color:var(--success)">✓ Match</span>':'<span style="color:var(--danger)">✗ MISMATCH</span>')+'</p><p class="hc-val">'+r.cur_sha256.substring(0,20)+'...</p></div></div><div class="hash-compare"><div class="hc-box '+mp+'"><p class="hc-label">Original MD5 (at upload)</p><p class="hc-val">'+r.cur_md5.substring(0,20)+'...</p></div><div class="hc-box '+mp+'"><p class="hc-label">Current MD5 '+(r.md5_match?'<span style="color:var(--success)">✓ Match</span>':'<span style="color:var(--danger)">✗ MISMATCH</span>')+'</p><p class="hc-val">'+r.cur_md5.substring(0,20)+'...</p></div></div></div>';});
 </script>
 <script src="../assets/js/main.js"></script>
 </body>

@@ -3,7 +3,7 @@
 $unread = count_unread_notifications($pdo, $_SESSION['user_id']);
 $in_pages = strpos($_SERVER['PHP_SELF'], '/pages/') !== false;
 $base     = $in_pages ? '../' : '';
-?>
+?><script>window.BASE_URL = '<?= defined('BASE_URL') ? BASE_URL : '' ?>';</script>
 <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 <header class="topbar">
     <div class="topbar-left">

@@ -1,9 +1,11 @@
 <?php
 // api/generate_preview_token.php - Generate short-lived token for image preview
 
+require_once __DIR__ . '/../config/functions.php';
+set_secure_session_config();
 session_start();
 require_once __DIR__ . '/../config/db.php';
-require_login();
+require_login($pdo);
 
 $evidence_id = (int)($_POST['evidence_id'] ?? 0);
 $uid = $_SESSION['user_id'];

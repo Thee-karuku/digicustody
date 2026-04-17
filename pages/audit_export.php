@@ -6,7 +6,7 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 
 if (!is_admin()) {
     header('Location: ../dashboard.php?error=access_denied');

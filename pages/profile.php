@@ -7,7 +7,7 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 
 $page_title = 'My Profile';
 $uid  = $_SESSION['user_id'];
@@ -76,7 +76,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Stats for this user
-$ev_uploaded  = (int)$pdo->prepare("SELECT COUNT(*) FROM evidence WHERE uploaded_by=?")->execute([$uid]) ? 0 : 0;
 $s = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE uploaded_by=?"); $s->execute([$uid]);
 $ev_uploaded = (int)$s->fetchColumn();
 

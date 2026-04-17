@@ -7,7 +7,7 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 
 // COC Report — admin, investigator, and analyst can view
 if (!is_admin() && !is_investigator() && !is_analyst()) {
@@ -350,8 +350,8 @@ body { font-family: 'Inter', sans-serif; background: white; color: #111; font-si
         <div class="hv"><?= e($ev['sha256_hash']) ?></div>
     </div>
     <div class="hash-box">
-        <div class="hl">MD5</div>
-        <div class="hv"><?= e($ev['md5_hash']) ?></div>
+        <div class="hl">SHA3-256</div>
+        <div class="hv"><?= e($ev['sha3_256_hash']) ?></div>
     </div>
     <div class="hash-box">
         <div class="hl">File Size</div>
@@ -391,7 +391,7 @@ body { font-family: 'Inter', sans-serif; background: white; color: #111; font-si
                     :'<span style="color:#cc2222">✗ MISMATCH</span>' ?>
             </td>
             <td style="padding:6px 10px;border:1px solid #eee;">
-                <?= $v['md5_at_verification']===$v['original_md5']
+                <?= $v['sha3_256_at_verification']===$v['original_sha3_256']
                     ?'<span style="color:#22aa66">✓ Match</span>'
                     :'<span style="color:#cc2222">✗ MISMATCH</span>' ?>
             </td>

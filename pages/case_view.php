@@ -7,7 +7,7 @@ require_once __DIR__."/../config/functions.php";
 set_secure_session_config();
 session_start();
 require_once __DIR__.'/../config/db.php';
-require_login();
+require_login($pdo);
 
 $page_title = 'Case Details';
 $uid  = $_SESSION['user_id'];
@@ -45,7 +45,7 @@ $stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence WHERE case_id=? AND status=
 $stmt->execute([$id]);
 $case_stats['flagged_evidence'] = (int)$stmt->fetchColumn();
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence_transfers WHERE case_id=? AND status='pending'");
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence_transfers et JOIN evidence e ON e.id=et.evidence_id WHERE e.case_id=? AND et.status='pending'");
 $stmt->execute([$id]);
 $case_stats['pending_transfers'] = (int)$stmt->fetchColumn();
 
@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['update_status']) && $ro
                     $case_error = "Cannot close case: $flagged_count evidence file(s) are flagged for integrity review. Resolve all flagged evidence before closing the case.";
                 } else {
                     // Cancel pending transfers - count first
-                    $stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence_transfers WHERE case_id=? AND status='pending'");
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM evidence_transfers et JOIN evidence e ON e.id=et.evidence_id WHERE e.case_id=? AND et.status='pending'");
                     $stmt->execute([$id]);
                     $cancelled_transfers = (int)$stmt->fetchColumn();
                     
@@ -217,28 +217,24 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['assign_analyst']) && $r
     }
 }
 
-// Handle collaborator add/remove (admin and investigators only)
+// Handle collaborator add/remove/invite (admin and investigators only)
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['collab_action']) && in_array($role, ['admin', 'investigator'])) {
     if (verify_csrf($_POST['csrf_token']??'')) {
         $sub_action = $_POST['sub_action'] ?? '';
         $collab_user_id = (int)($_POST['collab_user_id'] ?? 0);
         
-        if ($sub_action === 'add' && $collab_user_id > 0) {
-            $access_role = in_array($_POST['access_role'] ?? '', ['analyst', 'collaborator', 'investigator']) 
-                ? $_POST['access_role'] : 'analyst';
-            $notes = trim($_POST['collab_notes'] ?? '') ?: null;
-            
+        if ($sub_action === 'invite' && $collab_user_id > 0) {
             $chk = $pdo->prepare("SELECT full_name FROM users WHERE id=? AND status='active'");
             $chk->execute([$collab_user_id]);
             $collab = $chk->fetch();
             
             if ($collab) {
-                grant_case_access($pdo, $id, $collab_user_id, $uid, $access_role, $notes);
-                send_notification($pdo, $collab_user_id, 'Case Collaboration',
-                    "You have been added as $access_role to case {$case['case_number']}: {$case['case_title']}" . ($notes ? ". Notes: $notes" : ''), 
-                    'info', 'case', $id);
-                audit_log($pdo, $uid, $_SESSION['username'], $role, 'case_updated', 'case', $id,
-                    $case['case_number'], "Added collaborator: {$collab['full_name']} as $access_role");
+                $result = send_collab_invite($pdo, $id, $uid, $collab_user_id);
+                if ($result['success']) {
+                    $collab_msg = 'Invitation sent successfully!';
+                } else {
+                    $collab_error = 'Failed to send invitation.';
+                }
             }
         } elseif ($sub_action === 'remove' && $collab_user_id > 0) {
             revoke_case_access($pdo, $id, $collab_user_id);
@@ -247,6 +243,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['collab_action']) && in_
         }
     }
 }
+
+// Handle analyst assignment (admin only)
 
 // Fetch analysts for dropdown
 $analysts_stmt = $pdo->prepare("SELECT id, full_name, email FROM users WHERE role='analyst' ORDER BY full_name");
@@ -435,39 +433,68 @@ $csrf = csrf_token();
             <?php endif; ?>
             
             <!-- Conclude Case Modal -->
-            <div id="concludeModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;align-items:center;justify-content:center;">
-                <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:90%;max-width:500px;max-height:90vh;overflow-y:auto;">
-                    <h3 style="font-size:18px;font-weight:600;margin-bottom:16px;color:var(--text);"><i class="fas fa-clipboard-check"></i> Conclude Case</h3>
+            <div id="concludeModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(4,8,18,0.9);backdrop-filter:blur(8px);z-index:9999;align-items:center;justify-content:center;">
+                <div style="max-width:520px;width:90%;border:1px solid rgba(201,168,76,0.2);border-radius:16px;overflow:hidden;background:var(--surface);">
+                    <!-- Header Band -->
+                    <div style="padding:20px 24px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,rgba(201,168,76,0.08),transparent);display:flex;align-items:center;justify-content:space-between;">
+                        <div style="display:flex;align-items:center;gap:14px;">
+                            <div style="width:40px;height:40px;border-radius:10px;background:rgba(201,168,76,0.12);display:flex;align-items:center;justify-content:center;">
+                                <i class="fas fa-shield-check" style="color:var(--gold);font-size:18px;"></i>
+                            </div>
+                            <div>
+                                <h3 style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:var(--text);margin:0;">Conclude Case</h3>
+                                <p style="font-size:12px;color:var(--muted);margin:2px 0 0;">This will archive the case and all evidence.</p>
+                            </div>
+                        </div>
+                        <button type="button" onclick="document.getElementById('concludeModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:6px;">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
                     
-                    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px;">
-                        <p style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;">Checklist</p>
-                        <div style="display:flex;gap:16px;flex-wrap:wrap;">
-                            <div style="flex:1;min-width:100px;"><span style="font-size:24px;font-weight:700;color:var(--text);"><?= $case_stats['total_evidence'] ?></span><br><span style="font-size:11px;color:var(--muted);">Evidence Items</span></div>
-                            <div style="flex:1;min-width:100px;"><span style="font-size:24px;font-weight:700;color:<?= $case_stats['flagged_evidence']>0?'var(--danger)':'var(--success)' ?>"><?= $case_stats['flagged_evidence'] ?></span><br><span style="font-size:11px;color:var(--muted);">Flagged</span></div>
-                            <div style="flex:1;min-width:100px;"><span style="font-size:24px;font-weight:700;color:<?= $case_stats['pending_transfers']>0?'var(--warning)':'var(--success)' ?>"><?= $case_stats['pending_transfers'] ?></span><br><span style="font-size:11px;color:var(--muted);">Pending Transfers</span></div>
+                    <!-- Checklist Row -->
+                    <div style="padding:20px 24px;display:flex;gap:12px;">
+                        <div style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;">
+                            <i class="fas fa-folder-open" style="color:var(--gold);font-size:18px;margin-bottom:6px;"></i>
+                            <p style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;color:var(--text);margin:0;"><?= $case_stats['total_evidence'] ?></p>
+                            <p style="font-size:11px;color:var(--muted);margin:2px 0 0;">Evidence Items</p>
+                        </div>
+                        <div style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;">
+                            <i class="fas fa-flag" style="color:<?= $case_stats['flagged_evidence']>0?'var(--danger)':'var(--success)';?>;font-size:18px;margin-bottom:6px;"></i>
+                            <p style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;color:<?= $case_stats['flagged_evidence']>0?'var(--danger)':'var(--success)';?>;margin:0;"><?= $case_stats['flagged_evidence'] ?></p>
+                            <p style="font-size:11px;color:var(--muted);margin:2px 0 0;">Flagged</p>
+                        </div>
+                        <div style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;">
+                            <i class="fas fa-paper-plane" style="color:<?= $case_stats['pending_transfers']>0?'var(--warning)':'var(--success)';?>;font-size:18px;margin-bottom:6px;"></i>
+                            <p style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;color:<?= $case_stats['pending_transfers']>0?'var(--warning)':'var(--success)';?>;margin:0;"><?= $case_stats['pending_transfers'] ?></p>
+                            <p style="font-size:11px;color:var(--muted);margin:2px 0 0;">Pending Transfers</p>
                         </div>
                     </div>
                     
                     <?php if ($case_stats['flagged_evidence'] > 0): ?>
-                    <div class="alert alert-danger" style="margin-bottom:16px;"><i class="fas fa-flag"></i> Cannot close case with flagged evidence. Resolve all flags first.</div>
+                    <!-- Alert Banner -->
+                    <div style="background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.25);border-radius:10px;padding:12px 16px;margin:0 24px 16px;display:flex;align-items:center;gap:10px;">
+                        <i class="fas fa-triangle-exclamation" style="color:var(--danger);font-size:16px;"></i>
+                        <span style="font-size:13px;color:var(--danger);">Cannot close case with flagged evidence. Resolve all flags first.</span>
+                    </div>
                     <?php endif; ?>
                     
-                    <form method="POST" id="concludeForm">
+                    <!-- Notes Area -->
+                    <form method="POST" id="concludeForm" style="padding:16px 24px;">
                         <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
                         <input type="hidden" name="update_status" value="1">
                         <input type="hidden" name="status" value="closed">
-                        <div class="field">
-                            <label>Closing Notes (required)</label>
-                            <textarea name="closing_notes" id="closingNotes" placeholder="Enter closing notes, summary, findings..." required style="min-height:120px;" oninput="document.getElementById('concludeBtn').disabled=!this.value.trim()"></textarea>
-                    <?php if ($case_stats['flagged_evidence'] > 0): ?>
-                    <p style="font-size:11px;color:var(--danger);margin-top:4px;">Note: Closing will be blocked until all flagged evidence is resolved.</p>
-                    <?php endif; ?>
-                        </div>
-                        <div style="display:flex;gap:10px;margin-top:16px;">
-                            <button type="button" class="btn btn-outline" style="flex:1;padding:12px;" onclick="document.getElementById('concludeModal').style.display='none'">Cancel</button>
-                            <button type="submit" class="btn btn-gold" style="flex:1;padding:12px;" id="concludeBtn" disabled>Conclude & Archive Case</button>
+                        <div style="margin-bottom:16px;">
+                            <label style="display:block;font-size:11px;font-weight:500;color:var(--muted);letter-spacing:.7px;text-transform:uppercase;margin-bottom:6px;">Closing Notes <span style="color:var(--danger);">*</span></label>
+                            <textarea name="closing_notes" id="closingNotes" placeholder="Enter closing notes, summary, findings..." required style="width:100%;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:14px;color:var(--text);resize:vertical;min-height:110px;outline:none;box-sizing:border-box;font-family:inherit;" oninput="updateCharCount(this); document.getElementById('concludeBtn').disabled=!this.value.trim() || <?= $case_stats['flagged_evidence'] ?> > 0"></textarea>
+                            <p style="font-size:11px;color:var(--dim);text-align:right;margin-top:4px;"><span id="charCount">0</span> / 2000</p>
                         </div>
                     </form>
+                    
+                    <!-- Footer -->
+                    <div style="padding:16px 24px;border-top:1px solid var(--border);background:var(--surface2);display:flex;gap:12px;">
+                        <button type="button" class="btn btn-outline" style="flex:1;padding:12px;" onclick="document.getElementById('concludeModal').style.display='none'">Cancel</button>
+                        <button type="submit" form="concludeForm" class="btn btn-gold" style="flex:2;padding:12px;" id="concludeBtn" <?= $case_stats['flagged_evidence'] > 0 ? 'disabled' : '' ?>><i class="fas fa-archive"></i> Conclude & Archive Case</button>
+                    </div>
                 </div>
             </div>
             
@@ -577,14 +604,24 @@ $csrf = csrf_token();
 <div id="collabModal" class="modal-overlay" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(4,8,18,.85);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:20px;">
     <div class="section-card" style="max-width:440px;width:100%;animation:up .3s ease;">
         <div class="section-head" style="padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
-            <h3 style="font-size:16px;font-weight:600;color:var(--text);"><i class="fas fa-user-plus" style="color:var(--gold);margin-right:8px"></i>Add Collaborator</h3>
+            <h3 style="font-size:16px;font-weight:600;color:var(--text);"><i class="fas fa-user-plus" style="color:var(--gold);margin-right:8px"></i>Invite Collaborator</h3>
             <button type="button" onclick="closeCollabModal()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px;"><i class="fas fa-xmark"></i></button>
         </div>
         <div class="section-body padded">
+            <?php if (!empty($collab_msg)): ?>
+            <div class="alert alert-success" style="background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);color:var(--success);padding:10px 14px;border-radius:8px;margin-bottom:16px;">
+                <i class="fas fa-check-circle"></i> <?= e($collab_msg) ?>
+            </div>
+            <?php elseif (!empty($collab_error)): ?>
+            <div class="alert alert-error" style="background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--danger);padding:10px 14px;border-radius:8px;margin-bottom:16px;">
+                <i class="fas fa-circle-exclamation"></i> <?= e($collab_error) ?>
+            </div>
+            <?php endif; ?>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">The user will receive a notification and can accept or reject the invitation.</p>
             <form method="POST">
                 <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
                 <input type="hidden" name="collab_action" value="1">
-                <input type="hidden" name="sub_action" value="add">
+                <input type="hidden" name="sub_action" value="invite">
                 
                 <div class="field">
                     <label>Select User *</label>
@@ -592,31 +629,20 @@ $csrf = csrf_token();
                         <option value="">-- Choose a user --</option>
                         <?php 
                         $added_ids = array_column($collaborators, 'id');
+                        $stmt_inv = $pdo->prepare("SELECT invited_user_id FROM case_collab_invites WHERE case_id = ? AND status = 'pending'");
+                        $stmt_inv->execute([$id]);
+                        $pending_ids = array_column($stmt_inv->fetchAll(), 'invited_user_id');
                         foreach ($all_users as $u): 
-                            if (in_array($u['id'], $added_ids)) continue;
+                            if (in_array($u['id'], $added_ids) || in_array($u['id'], $pending_ids)) continue;
                         ?>
                         <option value="<?= $u['id'] ?>"><?= e($u['full_name']) ?> (<?= e($u['username']) ?>) — <?= ucfirst($u['role']) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
                 
-                <div class="field">
-                    <label>Access Role *</label>
-                    <select name="access_role" required>
-                        <option value="analyst">Analyst</option>
-                        <option value="collaborator">Collaborator</option>
-                        <option value="investigator">Investigator</option>
-                    </select>
-                </div>
-                
-                <div class="field">
-                    <label>Notes (optional)</label>
-                    <input type="text" name="collab_notes" placeholder="e.g., External consultant, specific task...">
-                </div>
-                
                 <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
                     <button type="button" class="btn btn-outline" onclick="closeCollabModal()">Cancel</button>
-                    <button type="submit" class="btn btn-gold"><i class="fas fa-user-plus"></i> Add Collaborator</button>
+                    <button type="submit" class="btn btn-gold"><i class="fas fa-paper-plane"></i> Send Invite</button>
                 </div>
             </form>
         </div>
@@ -627,6 +653,7 @@ $csrf = csrf_token();
 function openCollabModal(){document.getElementById('collabModal').style.display='flex';}
 function closeCollabModal(){document.getElementById('collabModal').style.display='none';}
 document.getElementById('collabModal').addEventListener('click',function(e){if(e.target===this)closeCollabModal();});
+function updateCharCount(el){document.getElementById('charCount').textContent=el.value.length;}
 </script>
 
 <!-- Tabs -->

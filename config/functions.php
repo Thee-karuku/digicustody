@@ -45,7 +45,7 @@ function set_secure_session_config() {
     if (session_status() === PHP_SESSION_NONE) {
         // Secure cookie settings
         ini_set('session.cookie_httponly', 1);
-        ini_set('session.cookie_secure', 1);
+        ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 1 : 0);
         ini_set('session.cookie_samesite', 'Strict');
         
         // Session security
@@ -438,6 +438,101 @@ function get_case_collaborators($pdo, $case_id) {
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+function send_collab_invite($pdo, $case_id, $invited_by, $invited_user_id) {
+    try {
+        $stmt = $pdo->prepare("SELECT case_number FROM cases WHERE id = ?");
+        $stmt->execute([$case_id]);
+        $case = $stmt->fetch();
+        
+        $stmt = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
+        $stmt->execute([$invited_by]);
+        $inviter = $stmt->fetch();
+        
+        $pdo->prepare("
+            INSERT INTO case_collab_invites (case_id, invited_by, invited_user_id) 
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE status = 'pending', responded_at = NULL
+        ")->execute([$case_id, $invited_by, $invited_user_id]);
+        
+        send_notification($pdo, $invited_user_id, 'Case Collaboration Invite',
+            "{$inviter['full_name']} invited you to collaborate on case {$case['case_number']}. Accept or reject to respond.",
+            'info', 'collab_invite', $case_id);
+        
+        return ['success' => true];
+    } catch (Exception $e) {
+        log_error("send_collab_invite failed", ['error' => $e->getMessage()]);
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+function accept_collab_invite($pdo, $invite_id, $user_id) {
+    try {
+        $stmt = $pdo->prepare("SELECT * FROM case_collab_invites WHERE id = ? AND invited_user_id = ? AND status = 'pending'");
+        $stmt->execute([$invite_id, $user_id]);
+        $invite = $stmt->fetch();
+        
+        if (!$invite) return ['success' => false, 'error' => 'Invite not found'];
+        
+        $pdo->prepare("UPDATE case_collab_invites SET status = 'accepted', responded_at = NOW() WHERE id = ?")
+            ->execute([$invite_id]);
+        
+        grant_case_access($pdo, $invite['case_id'], $user_id, $invite['invited_by'], 'collaborator');
+        
+        $stmt = $pdo->prepare("SELECT case_number FROM cases WHERE id = ?");
+        $stmt->execute([$invite['case_id']]);
+        $case = $stmt->fetch();
+        
+        send_notification($pdo, $invite['invited_by'], 'Invite Accepted',
+            "Your collaboration invite for case {$case['case_number']} was accepted.", 'success', 'case', $invite['case_id']);
+        
+        return ['success' => true, 'case_id' => $invite['case_id']];
+    } catch (Exception $e) {
+        log_error("accept_collab_invite failed", ['error' => $e->getMessage()]);
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+function reject_collab_invite($pdo, $invite_id, $user_id) {
+    try {
+        $stmt = $pdo->prepare("SELECT * FROM case_collab_invites WHERE id = ? AND invited_user_id = ? AND status = 'pending'");
+        $stmt->execute([$invite_id, $user_id]);
+        $invite = $stmt->fetch();
+        
+        if (!$invite) return ['success' => false, 'error' => 'Invite not found'];
+        
+        $pdo->prepare("UPDATE case_collab_invites SET status = 'rejected', responded_at = NOW() WHERE id = ?")
+            ->execute([$invite_id]);
+        
+        $stmt = $pdo->prepare("SELECT case_number FROM cases WHERE id = ?");
+        $stmt->execute([$invite['case_id']]);
+        $case = $stmt->fetch();
+        
+        send_notification($pdo, $invite['invited_by'], 'Invite Rejected',
+            "Your collaboration invite for case {$case['case_number']} was rejected.", 'warning', 'case', $invite['case_id']);
+        
+        return ['success' => true];
+    } catch (Exception $e) {
+        log_error("reject_collab_invite failed", ['error' => $e->getMessage()]);
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+function get_pending_collab_invites($pdo, $user_id) {
+    $stmt = $pdo->prepare("
+        SELECT ci.*, c.case_number, c.case_title,
+               u1.full_name AS inviter_name,
+               u2.full_name AS invited_name
+        FROM case_collab_invites ci
+        JOIN cases c ON c.id = ci.case_id
+        JOIN users u1 ON u1.id = ci.invited_by
+        JOIN users u2 ON u2.id = ci.invited_user_id
+        WHERE ci.invited_user_id = ? AND ci.status = 'pending'
+        ORDER BY ci.created_at DESC
+    ");
+    $stmt->execute([$user_id]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
 // ── Download History Logging ─────────────────────────────────
 
 function log_download($pdo, $evidence_id, $user_id, $token_id = null, $reason = '') {
@@ -452,6 +547,7 @@ function log_download($pdo, $evidence_id, $user_id, $token_id = null, $reason = 
                 $_SERVER['HTTP_USER_AGENT'] ?? '',
                 $reason
             ]);
+        record_metric($pdo, 'download', 0, $user_id);
     } catch (Exception $e) {
         log_error("log_download failed", ['error' => $e->getMessage()]);
     }
@@ -881,6 +977,8 @@ function handle_evidence_upload($file, $evidence_number, $pdo = null, $user_id =
         $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
         audit_log($pdo, $user_id, $username, $role, 'evidence_uploaded', 'evidence', 0, $evidence_number,
             "File uploaded: $filename | Size: " . format_filesize($hashes['file_size']) . " | SHA256: " . substr($hashes['sha256'], 0, 16) . "...", $ip, $user_agent);
+        
+        record_metric($pdo, 'upload', $hashes['file_size'], $user_id);
     }
     
     return [
@@ -896,6 +994,30 @@ function handle_evidence_upload($file, $evidence_number, $pdo = null, $user_id =
         'collection_location' => $collection_location,
         'collection_notes' => $collection_notes,
     ];
+}
+
+// ── Metrics Recording ───────────────────────────────────────────
+function record_metric($pdo, $type, $size = 0, $user_id = null) {
+    if (!$pdo) return;
+    
+    $today = date('Y-m-d');
+    $type = ($type === 'upload') ? 'uploads' : 'downloads';
+    $size = (int)$size;
+    $user_id = (int)$user_id;
+    
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO daily_metrics (metric_date, total_uploads, total_downloads, total_evidence_size, unique_users)
+            VALUES (?, 1, 0, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+                total_uploads = total_uploads + IF(? = 'uploads', 1, 0),
+                total_downloads = total_downloads + IF(? = 'downloads', 1, 0),
+                total_evidence_size = total_evidence_size + IF(? = 'upload', ?, 0)
+        ");
+        $stmt->execute([$today, $size, $user_id, $type, $type, $type, $size]);
+    } catch (PDOException $e) {
+        error_log("Metrics recording failed: " . $e->getMessage());
+    }
 }
 
 // ── Formatting Helpers ────────────────────────────────────────
