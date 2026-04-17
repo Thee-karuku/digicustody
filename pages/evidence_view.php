@@ -228,7 +228,7 @@ $last_integrity = $verifications[0]['integrity_status'] ?? 'unchecked';
 $flag_error = $_GET['error'] ?? '';
 $flag_msg = $_GET['msg'] ?? '';
 if($verified_msg==='intact'): ?>
-<div class="alert alert-success"><i class="fas fa-circle-check"></i> Integrity check passed — file is intact. SHA-256 and MD5 hashes match.</div>
+<div class="alert alert-success"><i class="fas fa-circle-check"></i> Integrity check passed — file is intact. SHA-256 and SHA3-256 hashes match.</div>
 <?php elseif($verified_msg==='tampered'): ?>
 <div class="alert alert-danger"><i class="fas fa-triangle-exclamation"></i> <strong>INTEGRITY ALERT:</strong> Hash mismatch detected — this file may have been tampered with. Evidence has been flagged.</div>
 <?php elseif($flag_error==='flagged_integrity' && $flag_msg): ?>

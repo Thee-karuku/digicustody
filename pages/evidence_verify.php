@@ -315,7 +315,7 @@ $csrf = csrf_token();
     <div class="result-icon"><i class="fas fa-shield-check"></i></div>
     <div>
         <p style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:var(--success)">✓ Integrity Verified — File Intact</p>
-        <p style="font-size:13.5px;color:var(--muted);margin-top:4px">Both SHA-256 and MD5 hashes match the originals recorded at upload. This evidence has not been modified.</p>
+        <p style="font-size:13.5px;color:var(--muted);margin-top:4px">Both SHA-256 and SHA3-256 hashes match the originals recorded at upload. This evidence has not been modified.</p>
     </div>
 </div>
 <?php else: ?>
@@ -388,7 +388,7 @@ $csrf = csrf_token();
             </form>
             <div style="margin-top:14px;padding:12px 14px;background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.15);border-radius:var(--radius);font-size:12.5px;color:var(--muted);">
                 <i class="fas fa-info-circle" style="color:var(--gold);margin-right:5px"></i>
-                This will re-calculate the SHA-256 and MD5 hashes of the current file and compare them with the originals recorded at upload. The result is permanently logged to the audit trail.
+                This will re-calculate the SHA-256 and SHA3-256 hashes of the current file and compare them with the originals recorded at upload. The result is permanently logged to the audit trail.
             </div>
         </div>
     </div>
@@ -522,7 +522,7 @@ document.getElementById('verifyForm').addEventListener('submit',async function(e
     const intact=r.status==='intact';
     b.innerHTML=intact?'<i class="fas fa-check"></i> Verified':'<i class="fas fa-times"></i> Tampered';
     b.disabled=false;
-    document.getElementById('verifyResult').innerHTML='<div class="result-banner '+r.status+'"><div class="result-icon"><i class="fas '+(intact?'fa-shield-check':'fa-triangle-exclamation')+'"></i></div><div><p style="font-family:Space Grotesk,sans-serif;font-size:18px;font-weight:700;color:var('+(intact?'success':'danger')+')">'+(intact?'Integrity Verified - File Intact':'INTEGRITY FAILURE - File May Be Tampered')+'</p><p style="font-size:13.5px;color:var(--muted);margin-top:4px">'+(intact?'Both SHA-256 and MD5 hashes match the originals.':'Hash mismatch detected.')+'</p></div></div>';
+    document.getElementById('verifyResult').innerHTML='<div class="result-banner '+r.status+'"><div class="result-icon"><i class="fas '+(intact?'fa-shield-check':'fa-triangle-exclamation')+'"></i></div><div><p style="font-family:Space Grotesk,sans-serif;font-size:18px;font-weight:700;color:var('+(intact?'success':'danger')+')">'+(intact?'Integrity Verified - File Intact':'INTEGRITY FAILURE - File May Be Tampered')+'</p><p style="font-size:13.5px;color:var(--muted);margin-top:4px">'+(intact?'Both SHA-256 and SHA3-256 hashes match the originals.':'Hash mismatch detected.')+'</p></div></div>';
 });
 document.querySelectorAll('form[action*="clear_flag"]').forEach(f=>f.addEventListener('submit',async function(e){e.preventDefault();const b=document.getElementById('clearFlagBtn'),c=new FormData(this);if(!c.get('admin_note')){alert('Admin note is required');return;}b.innerHTML='<i class="fas fa-spinner fa-spin"></i> Clearing flag...';b.disabled=true;let r;try{const res=await fetch(this.action,{method:'POST',body:c});r=await res.json();}catch(err){b.innerHTML='<i class="fas fa-times"></i> Error';b.disabled=false;alert('Error: '+err.message);return;}if(r.success){b.innerHTML='<i class="fas fa-check"></i> Flag Cleared';b.disabled=false;alert('Flag cleared! Status restored to: '+r.status);window.location.reload();}else{b.innerHTML='<i class="fas fa-times"></i> Failed';b.disabled=false;alert(r.error||'Failed to clear flag');}}));
 document.getElementById('confirmTamperForm')?.addEventListener('submit',async function(e){e.preventDefault();const b=document.getElementById('confirmTamperBtn'),c=new FormData(this);if(!c.get('admin_note')){alert('Investigation conclusion is required');return;}b.innerHTML='<i class="fas fa-spinner fa-spin"></i> Closing investigation...';b.disabled=true;let r;try{const res=await fetch(this.action,{method:'POST',body:c});r=await res.json();}catch(err){b.innerHTML='<i class="fas fa-times"></i> Error';b.disabled=false;alert('Error: '+err.message);return;}if(r.success){b.innerHTML='<i class="fas fa-check"></i> Investigation Closed';b.disabled=false;alert('Tampering confirmed! Investigation closed.');window.location.reload();}else{b.innerHTML='<i class="fas fa-times"></i> Failed';b.disabled=false;alert(r.error||'Failed to confirm tampering');}});
