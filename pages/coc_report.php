@@ -271,9 +271,9 @@ body { font-family: 'Inter', sans-serif; background: white; color: #111; font-si
 </div>
 
 <?php if ($last_integ === 'tampered'): ?>
-<div class="alert-tampered">⚠ WARNING: This evidence has FAILED integrity verification. The SHA-256 or MD5 hash does not match the original recorded at time of upload. This evidence may be inadmissible in court.</div>
+<div class="alert-tampered">⚠ WARNING: This evidence has FAILED integrity verification. The SHA-256 or SHA3-256 hash does not match the original recorded at time of upload. This evidence may be inadmissible in court.</div>
 <?php elseif ($last_integ === 'intact'): ?>
-<div class="alert-intact">✓ This evidence has been verified intact. Current SHA-256 and MD5 hashes match the originals recorded at time of upload.</div>
+<div class="alert-intact">✓ This evidence has been verified intact. Current SHA-256 and SHA3-256 hashes match the originals recorded at time of upload.</div>
 <?php endif; ?>
 
 <!-- ══ 1. CASE INFORMATION ══ -->
@@ -372,7 +372,7 @@ body { font-family: 'Inter', sans-serif; background: white; color: #111; font-si
                 <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">Verified By</th>
                 <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">Result</th>
                 <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">SHA-256 Match</th>
-                <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">MD5 Match</th>
+                <th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">SHA3-256 Match</th>
             </tr>
         </thead>
         <tbody>
